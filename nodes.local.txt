@@ -1,4 +1,0 @@
-# Nodes for tests on one computer
-crdt1@127.0.0.1
-crdt2@127.0.0.1
-crdt3@127.0.0.1

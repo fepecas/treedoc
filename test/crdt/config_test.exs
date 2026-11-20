@@ -17,12 +17,9 @@ defmodule Crdt.ConfigTest do
   end
 
   @tag :req14
-  test "without NODES_FILE it reads nodes.local.txt" do
+  test "without NODES_FILE the table is empty" do
     System.delete_env("NODES_FILE")
-
-    assert Config.nodes() ==
-             {:ok, "nodes.local.txt",
-              [:"crdt1@127.0.0.1", :"crdt2@127.0.0.1", :"crdt3@127.0.0.1"]}
+    assert Config.nodes() == {:ok, "none", []}
   end
 
   @tag :req14

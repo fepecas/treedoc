@@ -1,10 +1,15 @@
 defmodule Crdt.Config do
-  @moduledoc "Reads the node table from the file in NODES_FILE (REQ14, DES6)."
+  @moduledoc "Reads the optional node table from the file in NODES_FILE (REQ14, DES6)."
 
-  @doc "`{:ok, file, nodes}` with the names as atoms, or `{:error, file, reason}`."
+  @doc "`{:ok, file, nodes}` with the names as atoms, or `{:error, file, reason}`; no NODES_FILE: `{:ok, \"none\", []}`."
   def nodes do
-    file = System.get_env("NODES_FILE", "nodes.local.txt")
+    case System.get_env("NODES_FILE") do
+      nil -> {:ok, "none", []}
+      file -> read(file)
+    end
+  end
 
+  defp read(file) do
     case File.read(file) do
       {:ok, text} -> {:ok, file, parse(text)}
       {:error, reason} -> {:error, file, reason}

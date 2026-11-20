@@ -64,9 +64,10 @@ defmodule Crdt.Replica do
       else: Crdt.Config.nodes()
   end
 
-  # DES4.5: <data_dir>/<me>.jsonl, with @ and . changed to _
+  # REQ13, DES4.5: <data_dir>/<name>.jsonl, the part before "@": it does not depend on the IP
   defp history_path(data_dir, me) do
-    Path.join(data_dir, String.replace(Atom.to_string(me), ["@", "."], "_") <> ".jsonl")
+    [name | _] = String.split(Atom.to_string(me), "@")
+    Path.join(data_dir, name <> ".jsonl")
   end
 
   defp start(me, nodes_file, nodes, path, ops, log) do
@@ -85,7 +86,7 @@ defmodule Crdt.Replica do
 
     :net_kernel.monitor_nodes(true)
     send_history(state)
-    broadcast(state, {:hello, me})
+    broadcast({:hello, me})
     send(self(), :connect)
     state
   end
@@ -205,20 +206,20 @@ defmodule Crdt.Replica do
     {:noreply, Enum.reduce(events, state, &handle_event/2)}
   end
 
-  # REQ12: resend the history on hello and on nodeup (DES4.4)
+  # REQ12: resend the history on hello and on nodeup, from any node (DES4.4, DES6)
   def handle_cast({:hello, n}, state) do
-    if n in state.nodes, do: resend_history(state, "hello from #{n}")
+    resend_history(state, "hello from #{n}")
     {:noreply, state}
   end
 
   @impl true
   def handle_info({:nodeup, n}, state) do
-    if n in state.nodes, do: resend_history(state, "connected #{n}")
+    resend_history(state, "connected #{n}")
     {:noreply, state}
   end
 
   def handle_info({:nodedown, n}, state) do
-    if n in state.nodes, do: say(state.me, "disconnected #{n}")
+    say(state.me, "disconnected #{n}")
     {:noreply, state}
   end
 
@@ -239,7 +240,7 @@ defmodule Crdt.Replica do
     write_log(state, msgs)
     state = %{state | history: state.history ++ msgs}
     # REQ5: send each new op, in order, as a {:remote, msg} cast (DES5.1)
-    Enum.each(msgs, &broadcast(state, {:remote, &1}))
+    Enum.each(msgs, &broadcast({:remote, &1}))
     state
   end
 
@@ -256,7 +257,7 @@ defmodule Crdt.Replica do
     write_log(state, [msg])
     say(state.me, "applied " <> describe(state, msg))
     # REQ11: forward once, unchanged, even if msg.from is this node (DES4.3)
-    broadcast(state, {:remote, msg})
+    broadcast({:remote, msg})
     %{state | history: state.history ++ [msg]}
   end
 
@@ -270,32 +271,45 @@ defmodule Crdt.Replica do
     state
   end
 
-  # REQ15: the history goes to every connected node of the table, in order
+  # REQ15: the history goes to every connected node, in order
   defp resend_history(state, why) do
     say(state.me, "#{why}: resending history (#{length(state.history)} ops)")
     send_history(state)
   end
 
-  defp send_history(state), do: Enum.each(state.history, &broadcast(state, {:remote, &1}))
+  defp send_history(state), do: Enum.each(state.history, &broadcast({:remote, &1}))
 
-  # REQ15, DES6: only nodes in Node.list() and in the table
-  defp broadcast(state, message) do
-    for n <- Node.list(), n in state.nodes, do: GenServer.cast({__MODULE__, n}, message)
+  # REQ15, DES6: membership is every connected node, Node.list(); no table filter
+  defp broadcast(message) do
+    for n <- Node.list(), do: GenServer.cast({__MODULE__, n}, message)
   end
 
+  # REQ17, DES9: discovery state and how each connected node was found
   defp status_lines(state) do
-    peers = Enum.filter(Node.list(), &(&1 in state.nodes))
+    {discovery, heard} =
+      if Process.whereis(Crdt.Discovery), do: Crdt.Discovery.info(), else: {"off", []}
+
+    peers = for n <- Node.list(), do: "#{n} (#{found(n, state.nodes, heard)})"
 
     [
       "node: #{state.me}",
       "nodes file: #{state.nodes_file}",
       "history file: #{state.path}",
       "table: #{inspect(List.delete(state.nodes, state.me))}",
-      "connected: #{inspect(peers)}",
+      "discovery: #{discovery}",
+      "connected: #{if peers == [], do: "none", else: Enum.join(peers, ", ")}",
       "clock: #{inspect(state.vc)}",
       "history: #{length(state.history)} ops",
       "buffer: #{length(state.buffer)} ops"
     ] ++ Enum.map(state.buffer, &waiting_text(state, &1))
+  end
+
+  defp found(n, nodes, heard) do
+    cond do
+      n in nodes -> "table"
+      n in heard -> "announced"
+      true -> "other"
+    end
   end
 
   defp last_lines(lines, :last) when length(lines) > 10 do

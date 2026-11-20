@@ -20,7 +20,7 @@ References:
 | There must be no central server | REQ1 | DES6: all nodes are equal and connect to each other |
 | Take into account the concurrency problems of the first part of the course | REQ16 | DES7: a single process owns the state on each node |
 | A CRDT that keeps the whole document on each node | REQ2, REQ7, REQ8 | DES3: Treedoc |
-| Nodes discover each other on the network (explicit connection is allowed) | REQ14 | DES6: fixed list of node names in a file |
+| Nodes discover each other on the network (dynamic connection, or explicit connection) | REQ14 | DES6 and DES6.1: multicast announcement on the local network, plus an optional list of node names in a file |
 | All communication is a broadcast to every connected node | REQ15 | DES4 and DES6: every message is sent to every connected node |
 | Send the local changes and receive the others' | REQ5, REQ6 | DES4 and DES5: `ins` and `del` messages |
 
@@ -43,7 +43,13 @@ References:
 | Resend the whole history on reconnection | OUR |
 | History in a readable file, written before sending | OUR (avoids repeating sequence numbers after a restart) |
 | Use the clock's sequence number as the disambiguator counter | OUR (a single counter) |
-| Erlang distribution, shared cookie, node list in a file | ASG (explicit connection between nodes, assignment Task 1), OUR (Erlang distribution, shared cookie, list in a file) |
+| Erlang distribution, shared cookie, discovery by UDP multicast plus an optional node list in a file | ASG (dynamic or explicit connection between nodes, assignment Task 1), OUR (Erlang distribution, shared cookie, our own multicast announcement, optional list) |
+| Membership: every connected node (`Node.list()`); the table only says whom to connect to | ASG (broadcast to all connected nodes, assignment Task 1), OUR (DES6) |
+| Discovery: a packet `crdt-treedoc-1 <node>` every 2 s to the group 233.252.1.32, UDP port 45892, TTL 1, on the interface of the IP of the node name; only packets with that tag count; own announcements and nodes already connected are ignored | OUR (no dependencies; tested on a phone hotspot, DES6.1) |
+| One discovery listener per machine: if the port is busy, the node only announces | OUR (sharing a UDP port needs options that differ per OS, DES6.1) |
+| If the discovery socket cannot be opened, or with `DISCOVERY=off`, the node runs without discovery | OUR (same general rule of DES6; the table still works, DES6.1) |
+| Node name `<hostname>@<IPv4>`, lowercased; a suffix `-N` for several nodes on one machine; never `.local` | OUR (the IP changes between networks; a name per machine avoids repeating sequence numbers when another machine gets an old IP, DES6) |
+| Start scripts `scripts/start.ps1` and `scripts/start.sh`: pick the Wi-Fi IPv4, print it, accept a forced IP and name, fix the distribution ports 4218 to 4228 | OUR (one command per machine; fixed firewall rules, DES6, DES11) |
 | Interface with functions in IEx | OUR |
 | Console messages for the demo | OUR |
 | `hello` message when the replica starts | OUR (avoids losing the catch-up, DES4.4) |
@@ -58,24 +64,24 @@ References:
 | An index or `count` that is not an integer ≥ 0: `{:error, :invalid_index}`; a `Crdt.insert` text that is not a string: fails in the calling process | OUR (DES9) |
 | Local edits do not print the "applied" notice | OUR (notices are for what arrives from the network and for connections, DES9) |
 | Invalid configuration (no `--name`, unreadable table, damaged history): the replica does not start, the console says what to fix, and the virtual machine and IEx stay alive | OUR (general rule, DES6) |
-| `Crdt.status()` shows the file and the nodes of the table, besides the connected ones | OUR (DES9) |
+| `Crdt.status()` shows the table file and the nodes of the table, the state of discovery, and every connected node with how it was found | OUR (DES9) |
 | For `delete`, the valid index goes from 0 to length - 1, also with `count` 0 | OUR (DES9) |
-| Tests with real nodes (`:peer`), excluded by default | OUR (they test forwarding, the table filter and connect with real nodes, DES12) |
+| Tests with real nodes (`:peer`), excluded by default | OUR (they test forwarding, membership, discovery and connect with real nodes, DES12) |
 | Read the table before loading the history; a single broadcast of the history at start | OUR (DES4.4) |
 | The "history loaded: N ops" notice is always printed at start, also with 0 ops | OUR (DES9) |
 | If the history file cannot be read or opened for appending (for example, `data_dir` is missing), the replica does not start, and the folder is not created | OUR (same general rule of DES6, DES4.5) |
 | `Crdt.LogFormat.from_json_line/1` is tolerant: it accepts extra keys and does not check that `ch` is one grapheme or that `from` is in `vc` | OUR (the lines are written by our code, DES5.2) |
 | The first start creates an empty history file | OUR (the append-mode open creates it, DES4.5) |
 | "history loaded" is printed before the network notices and not at all if the replica does not start | OUR (DES9) |
-| Test network: a lab network, a phone hotspot or a home router (with `name@IP` if `.local` does not resolve, and an Ethernet cable or Wi-Fi added by SSH with `nmcli`) | OUR (DES13) |
-| History file at `<data_dir>/<me>.jsonl` | OUR (the `:data_dir` option of DES8 and the `:me` of the tests, DES4.5) |
+| Test network: a lab network, a phone hotspot or a home router (`name@IP`, and an Ethernet cable or Wi-Fi added by SSH with `nmcli`) | OUR (DES13) |
+| History file at `<data_dir>/<name>.jsonl`, with the part of the node name before `@` | OUR (it does not depend on the IP, DES4.5; the `:data_dir` option of DES8 and the `:me` of the tests) |
 | Remote operation: write and sync before the "applied" notice | OUR ("applied" means it is already on disk, DES4.5) |
 | If the disk keeps failing, the `crdt` application stops and the virtual machine stays alive | OUR (same general rule of DES6, DES4.5) |
 | The message without `--name` shows the PowerShell command and the macOS and Linux one | OUR (nodes also run on macOS and Linux, CON3, DES6, DES11) |
-| The `connected:` line of `Crdt.status()` shows only the nodes of the table that are connected | OUR (the same filter as the broadcast; remote consoles are not shown, DES6, DES9) |
+| The `connected:` line of `Crdt.status()` shows every connected node with `table`, `announced` or `other` | OUR (the same set as the broadcast; hidden remote consoles are not shown, DES6, DES9) |
 | MAN6 with two Pis: MAN2 with two nodes; MAN4 is halting one Pi, writing on the other, starting it again and seeing that it catches up; a third node (a computer with `crdt@IP`) is optional. REQ1 is tested locally with three nodes | OUR (there are two Pis, DES13) |
-| `deploy/crdt.service` (not included yet) runs `elixir ... -S mix run --no-halt` as the user created in Raspberry Pi Imager, in the project folder, with `NODES_FILE=nodes.pi.txt`, after the network and with `Restart=on-failure`; `mix compile` is done before, by hand | OUR (the service has no terminal and does not compile, DES13) |
-| A node of another team receives and sends our operations only if it is in our node table and has us in its own; it receives `{:remote, msg}` and `{:hello, node}` casts on a process registered as `Crdt.Replica` | OUR (the replica only sends to table nodes, DES6; the messages of DES5.1) |
+| `deploy/crdt.service` (not included yet) runs the node without IEx as the user created in Raspberry Pi Imager, in the project folder, with the name and IP of `scripts/start.sh`, after the network and with `Restart=on-failure`; `mix compile` is done before, by hand | OUR (the service has no terminal and does not compile, DES13) |
+| A node of another team receives and sends our operations once it is connected to ours (by its table, ours or discovery); it receives `{:remote, msg}` and `{:hello, node}` casts on a process registered as `Crdt.Replica` | OUR (the replica sends to every connected node, DES6; the messages of DES5.1) |
 ---
 
 ## 3. Treedoc
@@ -223,14 +229,14 @@ This layer guarantees that each operation is applied exactly once on each node a
 
 - Each node keeps, in memory and in a file, the list of all the operations it has applied (its own and the others'), in the order in which it applied them. That order respects causality.
 - A node broadcasts its whole history, in order, in three cases:
-  1. When it receives `:nodeup` from a node of the table.
-  2. When `Crdt.Replica` starts, if there are nodes of the table already connected (because their `:nodeup` may have arrived before the replica existed): a single broadcast of the history to the nodes of the table already connected (REQ15). (OUR.)
-  3. When it receives a `{:hello, node}` message from a node of the table.
+  1. When it receives `:nodeup` from any node.
+  2. When `Crdt.Replica` starts, if there are nodes already connected (because their `:nodeup` may have arrived before the replica existed): a single broadcast of the history to the nodes already connected (REQ15). (OUR.)
+  3. When it receives a `{:hello, node}` message from any node.
 - Start order of the replica (`init`):
-  0. Read the table (DES6); if it cannot be read, report it and return `:ignore`. It comes before loading the history, so that a bad table never opens the file. (OUR.)
+  0. Read the table (DES6), if `NODES_FILE` is set; if it cannot be read, report it and return `:ignore`. It comes before loading the history, so that a bad table never opens the file. (OUR.)
   1. Load the history from the file (DES4.5). If the file is damaged, report it and return `:ignore`.
   2. Turn on `:net_kernel.monitor_nodes(true)`.
-  3. A single broadcast of the history to the nodes of the table already connected (case 2).
+  3. A single broadcast of the history to the nodes already connected (case 2).
   4. Broadcast `{:hello, me}`.
   5. Start the connection timer: a first attempt right away and then one every 2 seconds. Each attempt spawns a separate process for each node of the table that is not in `Node.list()`; that process only calls `Node.connect/1` (DES6 and DES7.1).
 - Why the `hello` is needed: Erlang connects the nodes as soon as the virtual machine starts, before `Crdt.Replica` exists. If another node sends its history at that moment, the message is lost silently, because there is no registered process yet to receive it. The `hello` asks the others to send it again once the replica exists.
@@ -238,7 +244,8 @@ This layer guarantees that each operation is applied exactly once on each node a
 
 ### 4.5 History file
 
-- File `<data_dir>/<me>.jsonl` (in the name, `@` and `.` are changed to `_`); with the default options (DES8), `data/crdt1_127_0_0_1.jsonl`. (OUR.) One JSON line per operation (format in DES5.2).
+- File `<data_dir>/<name>.jsonl`, where `<name>` is the part of the node name before `@`; with the default options (DES8), `data/crdt1.jsonl` for `crdt1@127.0.0.1` and `data/pi-pe.jsonl` for `pi-pe@172.20.10.4`. It does not depend on the IP, so a node that comes back with a new IP finds its file (REQ13). (OUR.)
+- The clock and the PosIDs keep the full node name. After a new IP, the loaded operations keep their old name and the node starts a new clock entry: its new operations are numbered from 1 under the new name. No number repeats, because each name is used by one machine only (DES6) and all its own operations are in its own file. The clock gains one entry per new IP. One JSON line per operation (format in DES5.2).
 - A line is **complete** if it ends in `"\n"` and its content is valid JSON.
 
 **Required order for a local call** (`insert` or `delete`, of one or several characters; see also DES7):
@@ -296,20 +303,38 @@ There is also a control message, with no operation: `GenServer.cast({Crdt.Replic
 
 ## 6. Network
 
-*Covers: REQ1, REQ12, REQ14, REQ15, CON2.*
+*Covers: REQ1, REQ12, REQ14, REQ15, CON2, CON3.*
 
-- **Erlang distribution.** Each node starts with `--name` and `--cookie`. The cookie is a shared key: only nodes with the same cookie connect. The cookie is `cpd2026`, agreed with the other teams so we can test with each other. With a shared cookie, nodes of other teams can connect to ours; the replica only sends to the nodes of its table, so nothing of ours reaches them. (OUR.)
-- **Node names:**
-  - On the computer: `crdt1@127.0.0.1`, `crdt2@127.0.0.1`, `crdt3@127.0.0.1`.
-  - On the Raspberry Pis: `crdt@crdt-pi1.local`, `crdt@crdt-pi2.local`, … The hostname is set when the microSD is flashed; the `.local` is resolved by the local network (mDNS), so it does not depend on the IP. `name@IP` can also be used (for example `crdt@192.168.1.21`), agreed with the other teams. `name@hostname.local` is preferred, because it does not depend on the IP; with `name@IP`, if the network changes the IPs, `nodes.pi.txt` must be edited on each Pi. (OUR.)
-- **Node table:** a text file with one node name per line; lines that start with `#` are comments. Each line is cleaned with `String.trim/1`, because of Windows CRLF line endings. The file is chosen with the `NODES_FILE` environment variable (default `nodes.local.txt`). There are two: `nodes.local.txt` and `nodes.pi.txt`. The same file works on every machine; each node skips itself.
-- **Connection:** at start (last step of the start order of DES4.4) and then every 2 seconds, `Crdt.Replica` spawns a separate, short-lived process (`spawn/1`) for each node of the table that is not in `Node.list()`. That process only calls `Node.connect/1` and does not touch the replica's state. If it connects, the `{:nodeup, n}` notice reaches the replica's mailbox like any other message. Why it is not done inside the replica: DES7.1. (OUR.)
-- **Trust:** the messages of table nodes are trusted; a malformed one crashes the replica, which restarts from its file (DES4.5). (OUR.)
-- **Up and down:** with `:net_kernel.monitor_nodes(true)`, the node receives `{:nodeup, n}` and `{:nodedown, n}`. With `:nodeup` from a node of the table, it resends its history (DES4.4). With `:nodedown`, it only reports it in the console.
-- **Broadcast:** send the message to each node that is both in `Node.list()` and in the table. It is filtered by the table so as not to send messages to remote consoles (`--remsh`).
-- **Ports:** Erlang uses 4369 (EPMD) and one port per node that it picks by itself. They do not need to be configured. If they ever need to be fixed: `--erl "-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228"`.
-- If the node is started without `--name`, the application does not start `Crdt.Replica` and shows a clear message with the right command, but it does not fail either. The message has two commands: the PowerShell one and the macOS and Linux one (DES11). (OUR.) The `Crdt` functions return `{:error, :no_replica}` (DES9). So `mix test`, which runs without `--name`, keeps working.
-- **Invalid configuration (general rule):** if the configuration is not valid, the replica does not start, the console says what to fix, and the virtual machine and IEx stay alive; the `Crdt` functions return `{:error, :no_replica}`. Same as without `--name`. Cases: no `--name` (above); `NODES_FILE` points to a file that does not exist or cannot be read (`init` prints the file name and what to do, fix `NODES_FILE` and restart the node, and returns `:ignore`); damaged history or a history file that cannot be read or opened (DES4.5). (OUR.)
+- **Erlang distribution.** Each node starts with `--name` and `--cookie`. The cookie is a shared key: only nodes with the same cookie connect. The cookie is `cpd2026`, agreed with the other teams so we can test with each other. With a shared cookie, nodes of other teams can connect to ours and then receive our operations, like any connected node (DES14). (OUR.)
+- **Node names:** `<hostname>@<IPv4>`, always with the IPv4, never `.local`. (OUR.)
+  - The start scripts (DES11) build it: the machine's hostname, lowercased, with every character that is not `a-z`, `0-9`, `_` or `-` changed to `_`; for example `pi-pe@172.20.10.4`.
+  - Several nodes on one machine get a suffix: `pi-pe-1@IP`, `pi-pe-2@IP`. Locally the tests use the names `crdt1@127.0.0.1`, `crdt2@127.0.0.1` and `crdt3@127.0.0.1`, given to the script.
+  - Every machine needs its own hostname: two Pis left as `raspberrypi` would use the same name part, and therefore the same clock entries after a change of IP.
+  - Why the hostname and not a fixed `crdt`: the IP changes between networks, so the node name changes too (DES4.5). If every machine were `crdt@IP`, a machine that later gets the IP another machine used before would continue that machine's numbering, and could repeat sequence numbers that the others drop as duplicates.
+- **Membership:** the nodes of the cluster are all the connected nodes, `Node.list()`. Operations, forwards, histories and `hello` go to all of them. Hidden nodes (remote consoles started with `--hidden`, the control node of the tests) are not in `Node.list()` and receive nothing. (ASG, OUR.)
+- **How a node gets connected (hybrid):**
+  - **Discovery** (DES6.1), always on unless `DISCOVERY=off`: our nodes announce themselves on the local network and connect to each other.
+  - **Node table** (optional): a text file with one node name per line; lines that start with `#` are comments. Each line is cleaned with `String.trim/1`, because of Windows CRLF line endings. The file is chosen with the `NODES_FILE` environment variable; without it the table is empty. `nodes.example.txt` is an example. The same file works on every machine; each node skips itself. It is for nodes that discovery cannot reach (multicast blocked, another network).
+  - **Erlang connects the rest:** when two nodes connect, each one also connects to the nodes the other already knows (`global`, on by default). So if another node has my IP in its table, my node takes part with no change on my side.
+- **Connection to the table:** at start (last step of the start order of DES4.4) and then every 2 seconds, `Crdt.Replica` spawns a separate, short-lived process (`spawn/1`) for each node of the table that is not in `Node.list()`. That process only calls `Node.connect/1` and does not touch the replica's state. If it connects, the `{:nodeup, n}` notice reaches the replica's mailbox like any other message. Why it is not done inside the replica: DES7.1. (OUR.)
+- **Trust:** the messages of connected nodes are trusted; a malformed one crashes the replica, which restarts from its file (DES4.5). (OUR.)
+- **Up and down:** with `:net_kernel.monitor_nodes(true)`, the node receives `{:nodeup, n}` and `{:nodedown, n}` for every visible node. With `:nodeup`, it resends its history (DES4.4). With `:nodedown`, it only reports it in the console.
+- **Broadcast:** send the message to each node in `Node.list()`. A node without a process `Crdt.Replica` (for example a remote console started without `--hidden`) drops the cast silently.
+- **Ports:** Erlang uses 4369 (EPMD) and one distribution port per node. The start scripts fix the distribution ports to the range 4218 to 4228 with `ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228"`, so a firewall needs fixed rules only: TCP 4369, TCP 4218 to 4228 and UDP 45892 (discovery). (OUR.)
+- If the node is started without `--name`, the application does not start `Crdt.Replica` or `Crdt.Discovery` and shows a clear message with the right command, but it does not fail either. The message has two commands: the PowerShell one and the macOS and Linux one (DES11). (OUR.) The `Crdt` functions return `{:error, :no_replica}` (DES9). So `mix test`, which runs without `--name`, keeps working.
+- **Invalid configuration (general rule):** if the configuration is not valid, the replica does not start, the console says what to fix, and the virtual machine and IEx stay alive; the `Crdt` functions return `{:error, :no_replica}`. Same as without `--name`. Cases: no `--name` (above); `NODES_FILE` points to a file that does not exist or cannot be read (`init` prints the file name and what to do, fix `NODES_FILE` and restart the node, and returns `:ignore`); damaged history or a history file that cannot be read or opened (DES4.5). If the discovery socket cannot be opened, only discovery is missing: `Crdt.Discovery` prints why and returns `:ignore`, and the replica and the table keep working (DES6.1). (OUR.)
+
+### 6.1 Discovery
+
+*Covers: REQ14.*
+
+- `Crdt.Discovery` is a small GenServer, started by the application after `Crdt.Replica` on a named node, unless the environment variable `DISCOVERY` is `off`. (OUR.)
+- **Announcement:** every 2 seconds, starting at once, it sends one UDP packet with the text `crdt-treedoc-1 <node name>` (for example `crdt-treedoc-1 pi-pe@172.20.10.4`) to the multicast group 233.252.1.32, port 45892, with TTL 1 (it does not leave the local network) and loop on (other nodes of the same machine hear it). The multicast interface is the IP of the node name (`127.0.0.1` locally, the Wi-Fi IP on a network); if the host part is not an IPv4, the system default.
+- **Listening:** the socket binds port 45892 and joins the group on that interface. Only one socket per machine can bind the port (sharing it needs socket options that differ per OS). If the port is busy, for example because another node of the same machine has it, the node opens a socket on a free port and only announces: the listener of its machine, or of another machine, hears it and connects, and Erlang connects the rest (DES6).
+- **On a packet:** if it starts with the tag `crdt-treedoc-1 `, the rest is a node name. The node remembers it as "announced" (for `Crdt.status()`). If the name is not its own and is not in `Node.list()`, it spawns a short-lived process that calls `Node.connect/1`, the same rule as DES7.1. A packet without the tag, its own announcement, or a node already connected open no connection. So two connected nodes do not reconnect every 2 seconds.
+- **Failure:** if the socket cannot be opened at all, it prints `discovery off: cannot open UDP port 45892 (<reason>). Use a node table (NODES_FILE).` and returns `:ignore`. A failed send (for example, the Wi-Fi is down for a moment) is ignored; the next announcement tries again.
+- The name in a packet becomes an atom only after the tag check. On our own network that is enough (DES14).
+- If multicast is filtered by the network, `scripts/multicast_check.exs` shows it (NETWORK.md), and a node table is the way out.
 
 ---
 
@@ -340,11 +365,12 @@ No external dependencies: only Elixir 1.18 or later and OTP. Each module is smal
 | Module | Responsibility | Has effects (network, file) | Budget (lines) |
 |---|---|---|---|
 | `Crdt` | API to use from IEx: edit, `text`, `status`, `history` and `debug` | No (calls `Crdt.Replica`) | 60 |
-| `Crdt.Application` | Starts the supervisor and checks that the node has a name | Yes | 20 |
+| `Crdt.Application` | Starts the supervisor and checks that the node has a name; starts discovery unless `DISCOVERY=off` | Yes | 25 |
 | `Crdt.Treedoc` | The CRDT: `new`, `prepare`, `effect`, `value`, `compare`, `debug_rows` | No | 90 |
 | `Crdt.Causal` | Causal delivery rules: duplicate, deliverable, check the buffer, what is missing (`missing/2`, for `status` and the "waiting" notice) | No | 70 |
 | `Crdt.LogFormat` | Conversion of messages to JSON and back | No | 40 |
-| `Crdt.Config` | Read the node table | Reads a file | 15 |
+| `Crdt.Config` | Read the optional node table | Reads a file | 20 |
+| `Crdt.Discovery` | Announce the node and connect to the nodes heard on the local network (DES6.1) | Yes (UDP) | 60 |
 | `Crdt.Replica` | GenServer: joins everything, handles network, file and console | Yes | 250 |
 
 The budget counts physical lines that are not empty, are not comments and do not belong to `@moduledoc` or `@doc`. It is a reference cap, not a goal.
@@ -353,13 +379,15 @@ The budget counts physical lines that are not empty, are not comments and do not
 
 `Crdt.Replica.start_link/1` accepts options so it can be tested in `mix test`, which runs without `--name`:
 - `:me`: node identifier (default `node()`).
-- `:nodes`: node table (default, the one from `Crdt.Config`).
+- `:nodes`: node table (default, the one from `Crdt.Config`; empty without `NODES_FILE`).
 - `:data_dir`: history folder (default `"data"`).
 - `:name`: registered name of the process (default `Crdt.Replica`).
 
 If the history is damaged in the middle or the history file cannot be read or opened (DES4.5), or if `:nodes` is not given and the table file cannot be read (DES6), `start_link/1` returns `:ignore`.
 
 In a test there are no connected nodes (`Node.list()` is empty), so the replica sends nothing over the network.
+
+`Crdt.Discovery.start_link/1` accepts, for the tests, `:me` (the name it announces, default `node()`), `:ip` (the multicast interface, default the IP of the node name) and `:port` (default 45892); it registers as `Crdt.Discovery`. If the socket cannot be opened it returns `:ignore` (DES6.1).
 
 ---
 
@@ -372,7 +400,7 @@ Crdt.insert(index, "text")    # inserts each character starting at index
 Crdt.delete(index)            # deletes one character
 Crdt.delete(index, count)     # deletes count characters starting at index; if there are not enough, error and nothing is deleted
 Crdt.text()                   # visible text
-Crdt.status()                 # node, file and nodes of the table, nodes of the table that are connected, clock, history size, waiting operations and path of the history file
+Crdt.status()                 # node, table file and nodes, discovery, connected nodes and how each was found, clock, history size, waiting operations and path of the history file
 Crdt.history()                # the last 10 applied operations
 Crdt.history(:all)            # every applied operation, in the order in which they were applied
 Crdt.debug()                  # each character with its PosID and whether it is deleted
@@ -383,7 +411,7 @@ Crdt.debug()                  # each character with its PosID and whether it is 
 - An index or a `count` that is not an integer greater than or equal to 0 is invalid: `{:error, :invalid_index}`, without changing anything. If the text of `Crdt.insert` is not a string, the function fails in the calling process (guard in `Crdt`), without reaching the replica. (OUR.)
 - With an empty text or `count` 0 and a valid index, they answer as a successful edit, without generating operations.
 - If the replica is not running (because `--name` is missing, because the table file cannot be read, DES6, or because the history is damaged or cannot be read or opened, DES4.5), every `Crdt` function returns `{:error, :no_replica}`.
-- `Crdt.status()` shows the node, the table file, the nodes of the table (without the node itself), the nodes of the table that are connected (line `connected: ...`: those of `Node.list()` that are in the table, the same filter as the broadcast, DES6; remote consoles and other nodes outside the table are not shown; OUR.), the clock, the size of the history and each waiting operation with what it is missing, in the format of the "waiting" notice (below). It also shows the path of the history file, in a line `history file: ...`, so it is not confused with the table file (`nodes file: ...`). (OUR.) This is how it meets REQ17 for the buffer.
+- `Crdt.status()` shows the node, the table file (`none` without `NODES_FILE`), the nodes of the table (without the node itself), the state of discovery (line `discovery: listening on 45892`, `discovery: announce only` or `discovery: off`), every connected node (line `connected: ...`: those of `Node.list()`, the same set as the broadcast, DES6, each followed by how it was found: `(table)` if it is in the table, `(announced)` if discovery heard it, `(other)` otherwise, for example connected by another node; `none` if there are none; OUR.), the clock, the size of the history and each waiting operation with what it is missing, in the format of the "waiting" notice (below). It also shows the path of the history file, in a line `history file: ...`, so it is not confused with the table file (`nodes file: ...`). (OUR.) This is how it meets REQ17 for the buffer.
 - `Crdt.history()` shows the last 10 applied operations, one per line (`op 3 from crdt1@127.0.0.1: ins "a"`), after `... N earlier ops` if there are more. `Crdt.history(:all)` shows them all, in the order in which they were applied. This is how it meets REQ17 for the history. (OUR.)
 - A delete is shown with the deleted character: `op 4 from crdt1@127.0.0.1: del "a"`, both in `history` and in the "applied" notice. The character is taken from the document: the tombstone keeps it (DES3.5), and causal delivery guarantees that the insert was applied before the delete (DES4.2). (OUR.)
 - `status`, `history` and `debug` ask the replica for the data with a `GenServer.call` and print in the calling process. So the output appears in the console where the command was typed, also if it is a remote console (`--remsh`, DES13). They return `:ok`, or `{:error, :no_replica}` if the replica is not running. The tests capture the output with `ExUnit.CaptureIO`. (OUR.)
@@ -398,11 +426,12 @@ Console messages, always with the node name at the start:
 - `[crdt2@127.0.0.1] connected crdt3@127.0.0.1: resending history (12 ops)`
 - `[crdt2@127.0.0.1] disconnected crdt3@127.0.0.1`
 - `[crdt2@127.0.0.1] hello from crdt3@127.0.0.1: resending history (12 ops)`
-- `[crdt2@127.0.0.1] cannot read nodes file nodes.local.txt (no such file or directory): replica not started. Fix NODES_FILE and restart the node.`
+- `[crdt2@127.0.0.1] cannot read nodes file nodes.txt (no such file or directory): replica not started. Fix NODES_FILE and restart the node.`
 - `[crdt2@127.0.0.1] history loaded: 12 ops` (always when loading ends, also with 0 ops. It comes before the network notices, such as "connected" or "hello from", and it is not printed if the replica does not start. OUR)
-- `[crdt2@127.0.0.1] cannot open history file data/crdt2_127_0_0_1.jsonl (no such file or directory): replica not started. Check that the folder exists and restart the node.`
+- `[crdt2@127.0.0.1] cannot open history file data/crdt2.jsonl (no such file or directory): replica not started. Check that the folder exists and restart the node.`
 - `[crdt2@127.0.0.1] history: last line was incomplete; removed from file`
-- `[crdt2@127.0.0.1] history corrupted at line 7 of data/crdt2_127_0_0_1.jsonl: replica not started. Delete that file and restart the node to catch up with the others. Do not edit on this node until its text matches the others.`
+- `[crdt2@127.0.0.1] history corrupted at line 7 of data/crdt2.jsonl: replica not started. Delete that file and restart the node to catch up with the others. Do not edit on this node until its text matches the others.`
+- `[crdt2@127.0.0.1] discovery off: cannot open UDP port 45892 (address already in use). Use a node table (NODES_FILE).` (printed by `Crdt.Discovery`, DES6.1)
 
 ---
 
@@ -421,8 +450,10 @@ lib/crdt/log_format.ex
 lib/crdt/config.ex
 lib/crdt/replica.ex
 test/...
-nodes.local.txt
-nodes.pi.txt
+nodes.example.txt                       (example node table, only comments)
+scripts/start.ps1                       (start script, Windows, DES11)
+scripts/start.sh                        (start script, macOS and Linux, DES11)
+scripts/multicast_check.exs             (checks whether multicast works on a network, DES6.1)
 data/            (only data/.gitkeep goes to Git)
 deploy/README-pi.md                     (guide for the Raspberry Pis; not included yet)
 deploy/crdt.service                     (systemd service, DES13; not included yet)
@@ -432,20 +463,32 @@ docs/REQUIREMENTS.md
 docs/DESIGN.md
 docs/TESTS.md                           (guide to the automated tests)
 docs/MANUAL-TESTS.md                    (manual test guide with three terminals)
-docs/NETWORK.md                         (two computers on the same network)
+docs/NETWORK.md                         (several computers on the same network)
 docs/CODE-MAP.md                        (guide to study the code)
 docs/INTEGRATION.md                     (contract for another team: connect, and receive and send our operations)
 ```
 
 ---
 
-## 11. Run locally (Windows, PowerShell)
+## 11. Start scripts and running locally
 
-*Covers: CON3 (Windows; macOS and Linux below).*
+*Covers: CON3.*
 
-- Three nodes on one computer, `crdt1@127.0.0.1`, `crdt2@127.0.0.1` and `crdt3@127.0.0.1`, cookie `cpd2026`, table `nodes.local.txt` (DES6), one terminal per node.
+- One start command per machine: `scripts/start.ps1` on Windows (PowerShell) and `scripts/start.sh` on macOS and Linux (also the Pi). (OUR.)
+- What the script does, in order:
+  1. Name: the hostname, made safe (DES6), unless a name is given (`-Name` / `--name`, or `CRDT_NAME`). With `-Node N` / `--node N` it adds the suffix `-N`.
+  2. IP: the IPv4 of the Wi-Fi, by the rule below, unless an IP is given (`-Ip` / `--ip`, or `CRDT_IP`).
+  3. It prints the node name, the IP and the interface.
+  4. `mix compile`.
+  5. It sets `ERL_AFLAGS` with the distribution port range 4218 to 4228 (DES6) and runs `iex --name <name>@<IP> --cookie cpd2026 -S mix` (`iex.bat` on Windows: plain `iex` is another Windows command). The environment variables `NODES_FILE` and `DISCOVERY` reach the node as they are.
+- Rule to pick the IP (the multicast interface is the same, DES6.1):
+  - Windows: the default IPv4 routes (`0.0.0.0/0`) whose adapter is physical and up (`Get-NetAdapter -Physical`), so Hyper-V `vEthernet` adapters and VPNs are skipped. Among them, the Wi-Fi one (802.11); if there is no Wi-Fi one, the only one left. Its IPv4, skipping `169.254.*`.
+  - macOS: the interface of `route -n get default`, if it is not a VPN tunnel (`utun*`, `ppp*`); its IPv4 with `ipconfig getifaddr`.
+  - Linux and Pi: the devices of `ip -4 route show default`; the Wi-Fi one (`wl*`), or else the only one; its IPv4 with `ip -4 -o addr show dev`.
+  - If it cannot decide (no default route, several candidates, no IPv4), the script lists what it found and exits, asking for the IP. It never guesses.
+- Locally, three nodes on one computer: `crdt1@127.0.0.1`, `crdt2@127.0.0.1` and `crdt3@127.0.0.1`, started with the script and a given name and IP (for example `.\scripts\start.ps1 -Name crdt1 -Ip 127.0.0.1`), one terminal per node, with no node table: discovery on `127.0.0.1` finds them (DES6.1).
 - First, once and in a single terminal: `mix compile`. That way the three nodes do not try to compile at the same time in the same folder.
-- The commands, for PowerShell and for macOS and Linux, are in [README.md, "Quick start"](../README.md#quick-start). In PowerShell, IEx is `iex.bat`, because plain `iex` is another Windows command.
+- The commands, for PowerShell and for macOS and Linux, are in [README.md, "Quick start"](../README.md#quick-start).
 - To start from scratch: halt every node and delete the `.jsonl` files of `data/` on all of them (`data/.gitkeep` stays). Deleting the history of a single node has its own rules (DES14).
 - The manual tests MAN1 to MAN8 are defined in `REQUIREMENTS.md`; their steps are in `MANUAL-TESTS.md` (MAN1: Case 2; MAN2: Cases 5 and 6; MAN3: Case 4; MAN4: Cases 11 and 12; MAN5: Case 13; MAN7: Case 9; MAN8: Case 10).
 
@@ -463,9 +506,11 @@ The `mix test --cover` threshold is 0 (`test_coverage` in `mix.exs`) because the
 - Convergence: several simulated replicas that edit at random and exchange messages in random orders, with duplicates, using `Crdt.Causal`. All end with the same text. Use `:rand` with fixed seeds (no external libraries).
 - `Crdt.Causal`: apply, wait and drop; the buffer empties in the right order.
 - `Crdt.LogFormat`: round trip to JSON with no loss.
-- `Crdt.Config`: reads the node table and ignores blank lines and comments.
+- `Crdt.Config`: reads the node table and ignores blank lines and comments; without `NODES_FILE` the table is empty.
+- `Crdt.Discovery`: the packet and its parsing; a packet without the tag is ignored.
+- `Crdt.Replica` restarted with another node name and the same name part: same text, and the new operations are numbered from 1 under the new name.
 - `Crdt.Replica` without network: an invalid index does not change the clock, and `insert` of several characters leaves the text together.
-- With real nodes: `test/crdt_distributed_test.exs` starts nodes with `:peer` (OTP 25 or later) on the same computer. It carries `@tag :distributed`, is excluded by default (`test/test_helper.exs`) and runs with `mix test --include distributed`. It checks the forwarding of what leaves the buffer, that a node outside the table receives nothing, the history on `:nodeup` and `hello`, that an unreachable node in the table does not block `Crdt.insert`, that the history loaded from the file is sent only once to a node of the table already connected, and the file order (DES4.5): in a local call, a single `:file.sync/1` and then the sends; in a remote operation, sync, "applied" notice and forwarding. (OUR.)
+- With real nodes: `test/crdt_distributed_test.exs` starts nodes with `:peer` (OTP 25 or later) on the same computer. It carries `@tag :distributed`, is excluded by default (`test/test_helper.exs`) and runs with `mix test --include distributed`. It checks the forwarding of what leaves the buffer, that a connected node outside any table receives the operations, the history on `:nodeup` and `hello` from any node, that an unreachable node in the table does not block `Crdt.insert`, that the history loaded from the file is sent only once to a node already connected, discovery (two nodes with no table find each other; an announcement connects, its own announcement and a packet without the tag do not; a busy port gives announce only), and the file order (DES4.5): in a local call, a single `:file.sync/1` and then the sends; in a remote operation, sync, "applied" notice and forwarding. (OUR.)
 - `Crdt` without a running replica returns `{:error, :no_replica}`.
 - `Crdt.status()` includes the waiting operations with what they are missing; `Crdt.history()` shows the last 10 (with `... N earlier ops` if there are more) and `Crdt.history(:all)` all of them, in order.
 - Loading a history: with the last line cut in half, the others are loaded; then a new operation is written and the history loads again with no errors. With a damaged line in the middle, `start_link/1` returns `:ignore`.
@@ -476,27 +521,26 @@ The `mix test --cover` threshold is 0 (`test_coverage` in `mix.exs`) because the
 
 *Covers: CON1, CON3.*
 
-- Raspberry Pi OS Lite (64-bit), flashed with Raspberry Pi Imager. The hostname (`crdt-pi1`, `crdt-pi2`, …), the user, SSH and the Wi-Fi of the test network (below) are set there too. (OUR.)
+- Raspberry Pi OS (64-bit), Lite or with desktop, flashed with Raspberry Pi Imager. The hostname, different on each Pi (for example `crdt-pi1`, `crdt-pi2`; never two left as `raspberrypi`, DES6), the user, SSH and the Wi-Fi of the test network (below) are set there too. (OUR.)
 - Install Elixir: `sudo apt install elixir`. On current Raspberry Pi OS (Debian trixie) it installs Elixir 1.18.3 with Erlang/OTP 27. That is why `mix.exs` declares `elixir: "~> 1.18"` and the code uses nothing from Elixir 1.19 or later or from OTP 28 or later, even if it is developed on Windows with newer versions. When in doubt, the simplest alternative is used.
-- On the Pi, after copying the code: `mix compile` and `mix test`. What was compiled on Windows does not work on the Pi (another OTP version), so `_build/` is not copied.
+- On the Pi, after getting the code: `mix compile` and `mix test`. What was compiled on Windows does not work on the Pi (another OTP version), so `_build/` is not copied.
 - `deploy/README-pi.md` (not included yet) has the steps for the Pis, written without hardware and checked with the Pis.
-- `nodes.pi.txt` with the names `crdt@crdt-piN.local` (preferred) or `crdt@IP` (DES6). First check whether the `.local` names resolve on the test network; if not, use the IPs.
-- MAN6 is done with two Pis (`REQUIREMENTS.md`): MAN2 with two nodes, and MAN4 is halting one Pi, writing on the other, starting it again and seeing that it catches up. A third node is optional: a computer on the same network with `crdt@IP` in a temporary table, as in `NETWORK.md`. REQ1 is tested locally with three nodes. The steps of MAN6 go in `deploy/README-pi.md` (not included yet). (OUR.)
-- Before MAN6, the three-step connection test, without our code (agreed with the other teams): ping, `Node.connect/1` and `Node.list()`. The steps, and the other network steps, are in [NETWORK.md](NETWORK.md) (step 5 for the test).
-- Test network: a lab network, a phone hotspot or a home router. If `.local` does not resolve there, `name@IP` is used in `nodes.pi.txt`. If a Pi cannot join the Wi-Fi, an Ethernet cable, or the Wi-Fi added by SSH with `nmcli` (for example `sudo nmcli device wifi connect "<network>" password "<password>"`). (OUR.)
+- The node starts with `scripts/start.sh` (DES11): name `<hostname>@<Wi-Fi IPv4>`, discovery on, no node table. If multicast is blocked on the test network, a table with `NODES_FILE` (DES6).
+- MAN6 is done with two Pis (`REQUIREMENTS.md`): MAN2 with two nodes, and MAN4 is halting one Pi, writing on the other, starting it again and seeing that it catches up. A third node is optional: a computer on the same network started with its start script, as in `NETWORK.md`. REQ1 is tested locally with three nodes. The steps of MAN6 go in `deploy/README-pi.md` (not included yet). (OUR.)
+- Before MAN6, the connection test, without our code (agreed with the other teams): ping, `Node.connect/1` and `Node.list()`. The steps, and the other network steps, are in [NETWORK.md](NETWORK.md).
+- Test network: a lab network, a phone hotspot or a home router. If a Pi cannot join the Wi-Fi, an Ethernet cable, or the Wi-Fi added by SSH with `nmcli` (for example `sudo nmcli device wifi connect "<network>" password "<password>"`). (OUR.)
 - With the other Pi off or unreachable, `Crdt.insert` answers at once: the slow `Node.connect/1` runs in a separate process and does not block the replica (DES7.1). It is checked before MAN6. (OUR.)
 - systemd service (`deploy/crdt.service`, not included yet) so that the node starts with the Pi and restarts if it fails. What it runs (OUR.):
-  - `ExecStart`: `elixir --name crdt@<hostname>.local --cookie cpd2026 -S mix run --no-halt`, with the full path of `elixir` (with the Debian package, `/usr/bin/elixir`). No `iex`: the service has no terminal.
+  - `ExecStart`: the node without IEx (`elixir ... -S mix run --no-halt`, with the full path of `elixir`, `/usr/bin/elixir` with the Debian package), with the name, IP and ports of `scripts/start.sh`. No `iex`: the service has no terminal.
   - `WorkingDirectory`: the project folder on the Pi (for example `/home/<user>/crdt`).
-  - `Environment=NODES_FILE=nodes.pi.txt`.
   - `User`: the user created in Raspberry Pi Imager, not a fixed `pi`.
   - `After=network-online.target` and `Wants=network-online.target`.
   - `Restart=on-failure`.
   - `mix compile` is done before, by hand, in the project folder: the service does not compile.
   - If the `crdt` application stops because the disk keeps failing (DES4.5), or if the replica does not start because of an invalid configuration (DES6), the virtual machine stays alive and systemd does not restart it: there is no process failure. It shows in `journalctl` and is fixed by hand.
   - The installation and usage steps go in `deploy/README-pi.md` (not included yet), section "Run as a service".
-- Console on the node that runs as a service: `iex --name console@crdt-pi1.local --cookie cpd2026 --remsh crdt@crdt-pi1.local`.
-- For the demo, the node of each Pi runs in the foreground in an SSH session (`iex --name crdt@crdt-pi1.local --cookie cpd2026 -S mix`), as on Windows: the commands and the replica's notices are visible there (DES9). Before that the service must be stopped (`sudo systemctl stop crdt`), only if it is installed, because two nodes cannot have the same name. (OUR.)
+- Console on a node that runs as a service, on the Pi itself: `iex --name console@127.0.0.1 --cookie cpd2026 --hidden --remsh <node name>`, with the node name printed by the script. With `--hidden`, the console is not in `Node.list()` and receives no operations (DES6).
+- For the demo, the node of each Pi runs in the foreground in an SSH session (`./scripts/start.sh`), as on Windows: the commands and the replica's notices are visible there (DES9). Before that the service must be stopped (`sudo systemctl stop crdt`), only if it is installed, because two nodes cannot have the same name. (OUR.)
 
 ---
 
@@ -508,7 +552,11 @@ The `mix test --cover` threshold is 0 (`test_coverage` in `mix.exs`) because the
 - **Catching up costs one sync per operation.** When receiving a large history, each new remote operation does its own `:file.sync/1`. On the Pi that can take seconds, and meanwhile a local call may have to wait.
 - **Tombstones forever**, with no *flatten* or garbage collection. It is our choice, not a need: with UDIS a deleted leaf could be discarded at once (PAP3.3.1); the paper keeps tombstones for SDIS (PAP3.3.2). We keep them to show deleted characters (DES2).
 - **The cookie gives full access to the nodes.** On our own network it is not a problem.
-- **The node table is fixed.** Adding a node means editing the file. If the table uses `name@IP` and the network changes the IPs, `nodes.pi.txt` must be edited on each Pi (DES6).
+- **Discovery only reaches the local network.** Multicast does not cross routers (TTL 1), and some networks filter it (lab Wi-Fi, client isolation). Then a node table is needed; with `name@IP` in the table, it must be edited when the network changes the IPs (DES6).
+- **One discovery listener per machine.** If the node that listens on a machine halts, the other nodes of that machine only announce until one of them restarts. They stay connected to each other, and the listeners of other machines still hear them (DES6.1).
+- **Any connected node receives our operations.** Membership is `Node.list()`: a node of another team with the same cookie, or a remote console started without `--hidden`, receives every cast. Without a process `Crdt.Replica` the cast is dropped; a foreign `Crdt.Replica` that sends another format makes ours crash and restart from its file (INTEGRATION.md).
+- **Names from announcements become atoms.** A packet with our tag creates an atom with the name it carries. On our own network that is not a problem.
+- **The clock grows with each new IP.** Each name `<hostname>@<IP>` that a machine used keeps its entry in the clock and in the PosIDs (DES4.5). For a demo it does not matter.
 - **A combining accent inserted alone takes its own position.** It joins the previous character into one grapheme (for example `"e"` and then `"́"` look like `"é"`), but it still takes its own position: indices count stored positions, not graphemes of the visible text. It does not happen when typing normally, because the keyboard produces precomposed characters such as `"é"`.
 - **Deleting the history of a single node.** If `data/<node>.jsonl` of a single node is deleted (for example, because it was damaged, DES4.5), the node starts with its clock at 0 and the others resend everything to it. If someone edits on that node before it catches up, its new operations repeat sequence numbers, the others drop them as duplicates and the texts diverge. Rule: do not edit on that node until its text is the same as the others'.
 - **Repeated notices on reconnection.** With each `:nodeup` and each `hello`, every node resends its whole history by broadcast (REQ15, DES4.4), and each repeated copy prints "duplicate dropped" (and an operation that is already waiting prints "waiting" again). With 3 nodes and 200 characters (MAN8), one reconnection can print hundreds of lines. It is not an error.

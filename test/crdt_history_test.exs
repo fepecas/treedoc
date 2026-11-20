@@ -25,7 +25,7 @@ defmodule CrdtHistoryTest do
     ch: "c"
   }
 
-  defp path(dir), do: Path.join(dir, "a_x.jsonl")
+  defp path(dir), do: Path.join(dir, "a.jsonl")
 
   defp lines(msgs), do: Enum.map_join(msgs, &LogFormat.to_json_line/1)
 
@@ -37,12 +37,12 @@ defmodule CrdtHistoryTest do
     start(dir, io)
   end
 
-  defp start(dir, io) do
+  defp start(dir, io, me \\ @me) do
     group_leader = Process.group_leader()
     Process.group_leader(self(), io)
 
     try do
-      start_supervised!({Replica, me: @me, nodes: [], data_dir: dir, name: Replica})
+      start_supervised!({Replica, me: me, nodes: [], data_dir: dir, name: Replica})
     after
       Process.group_leader(self(), group_leader)
     end
@@ -179,6 +179,27 @@ defmodule CrdtHistoryTest do
     assert File.read!(path(dir)) == content
   end
 
+  @tag :req13
+  test "a new IP in the node name: same file, same text, new ops from 1 under the new name",
+       %{tmp_dir: dir} do
+    io = start(dir)
+    :ok = Crdt.insert(0, "ab")
+    :ok = stop_supervised(Replica)
+    StringIO.flush(io)
+
+    # same name part "a", another host: the file is still a.jsonl
+    new_me = :"a@10.0.0.9"
+    start(dir, io, new_me)
+    assert notices(io) == "[a@10.0.0.9] history loaded: 2 ops
+"
+    assert Crdt.text() == "ab"
+
+    :ok = Crdt.insert(2, "c")
+    assert Crdt.text() == "abc"
+    assert :sys.get_state(Replica).vc == %{@me => 2, new_me => 1}
+    assert [_, _, %{from: ^new_me, vc: %{^new_me => 1}}] = file_ops(dir)
+  end
+
   # DES4.5, DES6: start_link output when the history file cannot be read or opened
   defp start_ignored(data_dir) do
     capture_io(fn ->
@@ -192,7 +213,7 @@ defmodule CrdtHistoryTest do
   test "data_dir does not exist: :ignore, a message with the path, no folder created",
        %{tmp_dir: dir} do
     missing = Path.join(dir, "missing")
-    file = Path.join(missing, "a_x.jsonl")
+    file = Path.join(missing, "a.jsonl")
 
     assert start_ignored(missing) ==
              "[a@x] cannot open history file #{file} (no such file or directory): " <>

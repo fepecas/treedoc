@@ -15,7 +15,7 @@ defmodule Crdt do
   @doc "Visible text of this node's whole copy (REQ2)."
   def text, do: call(:text)
 
-  @doc "Prints node, files, table, connected table nodes, clock, history, waiting ops (REQ17)."
+  @doc "Prints node, files, table, discovery, connected nodes, clock, history, waiting ops (REQ17)."
   def status, do: print(call(:status))
 
   @doc "Prints the last 10 applied ops, after `... N earlier ops` if there are more (REQ17)."

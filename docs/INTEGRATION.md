@@ -18,14 +18,15 @@ path; other languages need an Erlang distribution library.
 
 - Our nodes use Erlang distribution (`DESIGN.md` DES6).
 - Cookie: `cpd2026`. Only nodes with the same cookie connect.
-- Long names: `--name name@IP`, for example `crdt@192.168.1.21`, or
-  `--name name@hostname.local`, for example `crdt@crdt-pi1.local`.
-  Short names (`--sname`) cannot talk to long names.
-- Ports: EPMD on TCP 4369, plus one port per node that Erlang picks by
-  itself. To fix that port:
-  `--erl "-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228"`.
+- Long names: `--name name@IP`. Our nodes are named
+  `<hostname>@<IPv4>`, for example `crdt-pi1@192.168.1.21`, by our start
+  scripts. Short names (`--sname`) cannot talk to long names.
+- Ports: EPMD on TCP 4369, plus one distribution port per node. Our
+  start scripts fix it to the range 4218 to 4228
+  (`-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228`, for
+  example in `ERL_AFLAGS`). Our discovery uses UDP 45892.
 - Firewall: allow those ports. How, on Windows and macOS:
-  [NETWORK.md](NETWORK.md), step 3.
+  [NETWORK.md](NETWORK.md), section 2.
 - OTP versions: "Erlang nodes can communicate across at least two
   preceding and two subsequent releases"
   ([Erlang documentation](https://www.erlang.org/doc/system/misc.html),
@@ -36,19 +37,25 @@ path; other languages need an Erlang distribution library.
   ```
 
   It returns, for example, `~c"27"`.
-- Check the connection in three steps, before any code of ours (ping,
-  `Node.connect/1`, `Node.list()`): [NETWORK.md](NETWORK.md), step 5.
+- Check the connection before any code of ours (ping,
+  `Node.connect/1`, `Node.list()`): [NETWORK.md](NETWORK.md), section 5.
 
 ## B. Receive and send our operations
 
-### Be in our table, and have us in yours
+### Connect to one of our nodes
 
-- Our nodes send only to nodes that are connected and in their node
-  table (`NODES_FILE`, `DESIGN.md` DES6). Ask us to add your exact node
-  name, for example `team@192.168.1.30`, on every one of our nodes.
-- Our nodes connect by themselves, every 2 seconds, to every node of
-  the table. You may also call `Node.connect/1`.
-- A node outside our table can connect, but receives nothing.
+- Our nodes send to every connected node (`Node.list()`, `DESIGN.md`
+  DES6). No table is needed: call `Node.connect/1` with the name of one
+  of our nodes, as its start script printed it. Erlang then connects
+  you to the others it knows.
+- Or ask us to put your exact node name, for example
+  `team@192.168.1.30`, in the node table (`NODES_FILE`) of one of our
+  nodes: it connects to you every 2 seconds until it reaches you.
+- Our discovery only acts on packets with our tag
+  (`crdt-treedoc-1 <node name>`, UDP 45892, `DESIGN.md` DES6.1). You may
+  send that packet too, but `Node.connect/1` is simpler.
+- A node with a hidden name (`--hidden`) is not in `Node.list()` and
+  receives nothing.
 
 ### Receive
 
@@ -59,8 +66,8 @@ path; other languages need an Erlang distribution library.
   - `{:remote, msg}`: one operation (format below).
   - `{:hello, node}`: a node of ours started. It asks you to send your
     whole history again.
-- Each of our nodes forwards every op it applies to every node of its
-  table. You get each op several times: drop the copies.
+- Each of our nodes forwards every op it applies to every connected
+  node. You get each op several times: drop the copies.
 - When you connect, and when you send us `{:hello, node()}`, each of
   our nodes sends you its whole history, one `{:remote, msg}` per op,
   in order.
@@ -138,26 +145,23 @@ positions do not compare with our PosIDs.
 On one computer. Our nodes are `crdt1@127.0.0.1` and `crdt2@127.0.0.1`;
 yours is `team@127.0.0.1`, a node without our code, with Elixir.
 
-First, our two nodes, with a temporary table that has yours. In the
-folder of this project, from an empty `data` folder (see
-[README.md, "Quick start"](../README.md#quick-start)), run `mix compile`
-once. Then create the table (first line) and start crdt1 and crdt2,
-each in its own terminal (the next two lines).
+First, our two nodes. In the folder of this project, from an empty
+`data` folder (see [README.md, "Quick start"](../README.md#quick-start)),
+run `mix compile` once. Then start crdt1 and crdt2, each in its own
+terminal. No node table is needed.
 
 PowerShell (Windows):
 
 ```powershell
-Set-Content $env:TEMP\nodes.team.txt "crdt1@127.0.0.1", "crdt2@127.0.0.1", "team@127.0.0.1"
-$env:NODES_FILE="$env:TEMP\nodes.team.txt"; iex.bat --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
-$env:NODES_FILE="$env:TEMP\nodes.team.txt"; iex.bat --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+.\scripts\start.ps1 -Name crdt1 -Ip 127.0.0.1
+.\scripts\start.ps1 -Name crdt2 -Ip 127.0.0.1
 ```
 
 macOS / Linux:
 
 ```sh
-printf 'crdt1@127.0.0.1\ncrdt2@127.0.0.1\nteam@127.0.0.1\n' > /tmp/nodes.team.txt
-NODES_FILE=/tmp/nodes.team.txt iex --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
-NODES_FILE=/tmp/nodes.team.txt iex --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+./scripts/start.sh --name crdt1 --ip 127.0.0.1
+./scripts/start.sh --name crdt2 --ip 127.0.0.1
 ```
 
 Then yours, in a third terminal, in any folder outside this project:
@@ -189,7 +193,10 @@ GenServer.cast({Crdt.Replica, :"crdt1@127.0.0.1"}, {:hello, node()})
 ```
 
 It returns `:ok`. crdt1 prints
-`hello from team@127.0.0.1: resending history (0 ops)`. Now, on crdt1,
+`connected team@127.0.0.1: resending history (0 ops)` and
+`hello from team@127.0.0.1: resending history (0 ops)`; crdt2 prints
+`connected team@127.0.0.1: ...`, because Erlang connected your node to
+crdt2 too. Now, on crdt1,
 `Crdt.insert(0, "hola")`. Your console shows each op, twice (from crdt1
 and forwarded by crdt2), for example:
 
@@ -220,8 +227,8 @@ GenServer.cast({Crdt.Replica, :"crdt1@127.0.0.1"}, {:remote, msg})
   before every character typed at index 0 by our nodes, which are right
   children (`DESIGN.md` DES3.4).
 
-To finish, `System.halt()` on the three nodes, then delete `data/*.jsonl`
-and the temporary table.
+To finish, `System.halt()` on the three nodes, then delete
+`data/*.jsonl`.
 
 ## Where to start
 

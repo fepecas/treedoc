@@ -36,8 +36,11 @@ The words used in this guide and in the other documents:
   Each node keeps the whole document.
 - **Op**: one change to one character, an insert (`ins`) or a delete
   (`del`). `op 3 from crdt1` is the third op typed on crdt1.
-- **History file**: `data\<node>.jsonl`, one op per line, in JSON. A
-  node reloads it when it restarts.
+- **History file**: `data\<name>.jsonl` (the node name before `@`), one
+  op per line, in JSON. A node reloads it when it restarts.
+- **Discovery**: each node announces its name on the local network every
+  2 seconds; the nodes that hear it connect to it. No node table is
+  needed.
 - **PosID**: the position identifier of a character, a path in a binary
   tree; the text is the characters in tree order. You see it in
   `Crdt.debug()`.
@@ -76,7 +79,7 @@ The words used in this guide and in the other documents:
 | [Case 21](#case-21-one-node-deletes-a-character-while-another-inserts-after-it) | One node deletes a character while another inserts after it |
 | [Case 22](#case-22-clean-up) | Clean up |
 | [Not by hand: "waiting"](#not-by-hand-an-op-that-waits) | Why "waiting" does not show up here |
-| [With network (two or three computers)](#with-network-two-or-three-computers) | One node per computer: the table, the three-step test, the clocks, which cases apply |
+| [With network (two or three computers)](#with-network-two-or-three-computers) | One node per computer: the start script, the clocks, which cases apply |
 | [Network case](#network-case-edit-while-disconnected) | Edit while disconnected, then converge (no clock needed) |
 
 ## Before you start
@@ -132,13 +135,13 @@ for checks.
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt1 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt1 --ip 127.0.0.1
    ```
 
 7. In **crdt2**:
@@ -146,13 +149,13 @@ for checks.
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt2 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt2 --ip 127.0.0.1
    ```
 
 8. In **crdt3**:
@@ -160,30 +163,34 @@ for checks.
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt3 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt3 --ip 127.0.0.1
    ```
 
-**Expected:** each terminal shows the Erlang and IEx banner, then its
-first notice and the IEx input line, such as `iex(crdt1@127.0.0.1)1>`:
+**Expected:** each terminal shows the node name the script chose, the
+Erlang and IEx banner, then its first notice and the IEx input line,
+such as `iex(crdt1@127.0.0.1)1>`:
 
 ```
+node: crdt1@127.0.0.1 (interface: given)
+...
 [crdt1@127.0.0.1] history loaded: 0 ops
 ```
 
-- Windows: if the firewall asks about `erl.exe` or `epmd.exe`, allow it.
-  Type `iex.bat`, not `iex`: in PowerShell plain `iex` is another
-  command. `$env:NODES_FILE=...` stays set in that terminal until you
-  close it.
-- macOS and Linux: type `iex`, and put `NODES_FILE=...` in front of the
-  command, as above; it applies only to that command. On macOS, if the
-  firewall asks whether `beam.smp` may accept incoming connections,
-  allow it.
+- Windows: if PowerShell refuses to run the script ("running scripts
+  is disabled on this system"), run once
+  `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` and try again.
+  If the firewall asks about `erl.exe` or `epmd.exe`, allow it.
+- macOS and Linux: on macOS, if the firewall asks whether `beam.smp`
+  may accept incoming connections, allow it.
+- The script gives each node the name and IP of the command
+  (`crdt1@127.0.0.1`); there is no node table: the nodes find each
+  other by discovery.
 - To leave a node at any time: `System.halt()`.
 
 From here on, "In **crdt2**: `Crdt.text()`" means: type `Crdt.text()`
@@ -191,8 +198,8 @@ in the IEx of crdt2 and press Enter.
 
 ## Case 1: the three nodes connect
 
-**Goal:** the three nodes find each other with no central server
-(REQ1, REQ14).
+**Goal:** the three nodes find each other with no central server and
+no node table (REQ1, REQ14).
 
 **Steps**
 
@@ -205,49 +212,56 @@ in the IEx of crdt2 and press Enter.
 
 3. Repeat step 2 in **crdt2** and in **crdt3**.
 
-**Expected:** right after starting, each console shows some
-`connected` or `hello from` notices. Which ones depends on the order
-and speed of the start. In the real run:
+**Expected:** right after starting, each console shows `connected`
+notices. Which ones depends on the order and speed of the start. In
+the real run:
 
 ```
 crdt1:
 [crdt1@127.0.0.1] history loaded: 0 ops
 [crdt1@127.0.0.1] connected crdt2@127.0.0.1: resending history (0 ops)
 [crdt1@127.0.0.1] connected crdt3@127.0.0.1: resending history (0 ops)
-[crdt1@127.0.0.1] hello from crdt3@127.0.0.1: resending history (0 ops)
 
 crdt2:
 [crdt2@127.0.0.1] history loaded: 0 ops
 [crdt2@127.0.0.1] connected crdt1@127.0.0.1: resending history (0 ops)
 [crdt2@127.0.0.1] connected crdt3@127.0.0.1: resending history (0 ops)
-[crdt2@127.0.0.1] hello from crdt3@127.0.0.1: resending history (0 ops)
 
 crdt3:
 [crdt3@127.0.0.1] history loaded: 0 ops
+[crdt3@127.0.0.1] connected crdt1@127.0.0.1: resending history (0 ops)
+[crdt3@127.0.0.1] connected crdt2@127.0.0.1: resending history (0 ops)
 ```
 
 `Crdt.status()` in crdt1:
 
 ```
 node: crdt1@127.0.0.1
-nodes file: nodes.local.txt
-history file: data/crdt1_127_0_0_1.jsonl
-table: [:"crdt2@127.0.0.1", :"crdt3@127.0.0.1"]
-connected: [:"crdt2@127.0.0.1", :"crdt3@127.0.0.1"]
+nodes file: none
+history file: data/crdt1.jsonl
+table: []
+discovery: listening on 45892
+connected: crdt2@127.0.0.1 (announced), crdt3@127.0.0.1 (announced)
 clock: %{}
 history: 0 ops
 buffer: 0 ops
 :ok
 ```
 
-crdt2 and crdt3 show the same form, with their own name and the other
-two in `table` and `connected`.
+In crdt2 and crdt3 the same form, with their own name and:
+
+```
+discovery: announce only
+connected: crdt1@127.0.0.1 (other), crdt3@127.0.0.1 (other)
+```
 
 **Pass if:** on each node, `connected:` lists the other two nodes.
 
-**Why:** a node prints nothing about a node that was already connected
-when it started (crdt3 above); that is normal. `Crdt.status()` is the
-reliable check.
+**Why:** only one node per computer can listen for announcements, the
+first one started (`listening on 45892`); the others only announce
+(`announce only`). crdt1 hears them and connects to both, and Erlang
+connects crdt2 and crdt3 to each other. `(announced)`: this node heard
+its announcement; `(other)`: another node made the connection.
 
 ## Case 2: one node writes, the others see it
 
@@ -279,13 +293,13 @@ REQ15; MAN1).
    PowerShell (Windows):
 
    ```powershell
-   Get-Content data\crdt2_127_0_0_1.jsonl -TotalCount 1
+   Get-Content data\crdt2.jsonl -TotalCount 1
    ```
 
    macOS / Linux:
 
    ```sh
-   head -n 1 data/crdt2_127_0_0_1.jsonl
+   head -n 1 data/crdt2.jsonl
    ```
 
 **Expected**
@@ -341,13 +355,13 @@ what `duplicate dropped` means: not an error.
    PowerShell (Windows):
 
    ```powershell
-   (Get-Content data\crdt3_127_0_0_1.jsonl | Measure-Object -Line).Lines
+   (Get-Content data\crdt3.jsonl | Measure-Object -Line).Lines
    ```
 
    macOS / Linux:
 
    ```sh
-   wc -l < data/crdt3_127_0_0_1.jsonl
+   wc -l < data/crdt3.jsonl
    ```
 
 **Expected**
@@ -405,13 +419,13 @@ land in the middle of the word.
    PowerShell (Windows):
 
    ```powershell
-   (Select-String -Path data\crdt1_127_0_0_1.jsonl -Pattern '"op":"del"' | Measure-Object).Count
+   (Select-String -Path data\crdt1.jsonl -Pattern '"op":"del"' | Measure-Object).Count
    ```
 
    macOS / Linux:
 
    ```sh
-   grep -c '"op":"del"' data/crdt1_127_0_0_1.jsonl
+   grep -c '"op":"del"' data/crdt1.jsonl
    ```
 
 **Expected**
@@ -585,13 +599,13 @@ position each (REQ3, REQ18).
    PowerShell (Windows):
 
    ```powershell
-   Select-String -Path data\crdt3_127_0_0_1.jsonl -Pattern '"ch":"ñ"' -Encoding UTF8 | Select-Object -ExpandProperty LineNumber
+   Select-String -Path data\crdt3.jsonl -Pattern '"ch":"ñ"' -Encoding UTF8 | Select-Object -ExpandProperty LineNumber
    ```
 
    macOS / Linux:
 
    ```sh
-   grep -n '"ch":"ñ"' data/crdt3_127_0_0_1.jsonl | cut -d: -f1
+   grep -n '"ch":"ñ"' data/crdt3.jsonl | cut -d: -f1
    ```
 
 **Expected**
@@ -620,7 +634,7 @@ position each (REQ3, REQ18).
 several bytes; `🙂` is one position. To read the history file with
 `Get-Content` in Windows PowerShell, add `-Encoding UTF8`; without it
 `ñ` shows as `Ã±` (the file is fine). On macOS and Linux,
-`cat data/crdt3_127_0_0_1.jsonl` shows it right.
+`cat data/crdt3.jsonl` shows it right.
 
 ## Case 8: invalid input changes nothing
 
@@ -680,13 +694,13 @@ changes (REQ4).
    PowerShell (Windows):
 
    ```powershell
-   (Get-Content data\crdt1_127_0_0_1.jsonl | Measure-Object -Line).Lines
+   (Get-Content data\crdt1.jsonl | Measure-Object -Line).Lines
    ```
 
    macOS / Linux:
 
    ```sh
-   wc -l < data/crdt1_127_0_0_1.jsonl
+   wc -l < data/crdt1.jsonl
    ```
 
 **Expected**
@@ -695,10 +709,11 @@ changes (REQ4).
 
   ```
   node: crdt1@127.0.0.1
-  nodes file: nodes.local.txt
-  history file: data/crdt1_127_0_0_1.jsonl
-  table: [:"crdt2@127.0.0.1", :"crdt3@127.0.0.1"]
-  connected: [:"crdt2@127.0.0.1", :"crdt3@127.0.0.1"]
+  nodes file: none
+  history file: data/crdt1.jsonl
+  table: []
+  discovery: listening on 45892
+  connected: crdt2@127.0.0.1 (announced), crdt3@127.0.0.1 (announced)
   clock: %{"crdt1@127.0.0.1": 14, "crdt2@127.0.0.1": 9, "crdt3@127.0.0.1": 8}
   history: 31 ops
   buffer: 0 ops
@@ -766,37 +781,37 @@ so a refused edit leaves no gap in the op numbers.
    PowerShell (Windows):
 
    ```powershell
-   (Get-Content data\crdt2_127_0_0_1.jsonl | Measure-Object -Line).Lines
+   (Get-Content data\crdt2.jsonl | Measure-Object -Line).Lines
    ```
 
    macOS / Linux:
 
    ```sh
-   wc -l < data/crdt2_127_0_0_1.jsonl
+   wc -l < data/crdt2.jsonl
    ```
 
    PowerShell (Windows):
 
    ```powershell
-   (Select-String -Path data\crdt2_127_0_0_1.jsonl -Pattern '"op":"ins"' | Measure-Object).Count
+   (Select-String -Path data\crdt2.jsonl -Pattern '"op":"ins"' | Measure-Object).Count
    ```
 
    macOS / Linux:
 
    ```sh
-   grep -c '"op":"ins"' data/crdt2_127_0_0_1.jsonl
+   grep -c '"op":"ins"' data/crdt2.jsonl
    ```
 
    PowerShell (Windows):
 
    ```powershell
-   (Select-String -Path data\crdt2_127_0_0_1.jsonl -Pattern '"op":"del"' | Measure-Object).Count
+   (Select-String -Path data\crdt2.jsonl -Pattern '"op":"del"' | Measure-Object).Count
    ```
 
    macOS / Linux:
 
    ```sh
-   grep -c '"op":"del"' data/crdt2_127_0_0_1.jsonl
+   grep -c '"op":"del"' data/crdt2.jsonl
    ```
 
 **Expected**
@@ -805,18 +820,21 @@ so a refused edit leaves no gap in the op numbers.
 
   ```
   node: crdt2@127.0.0.1
-  nodes file: nodes.local.txt
-  history file: data/crdt2_127_0_0_1.jsonl
-  table: [:"crdt1@127.0.0.1", :"crdt3@127.0.0.1"]
-  connected: [:"crdt1@127.0.0.1", :"crdt3@127.0.0.1"]
+  nodes file: none
+  history file: data/crdt2.jsonl
+  table: []
+  discovery: announce only
+  connected: crdt1@127.0.0.1 (other), crdt3@127.0.0.1 (other)
   clock: %{"crdt2@127.0.0.1": 9, "crdt1@127.0.0.1": 14, "crdt3@127.0.0.1": 8}
   history: 31 ops
   buffer: 0 ops
   :ok
   ```
 
-  `table` is the node list of `nodes.local.txt` without this node;
-  `connected` shows only nodes of that list; `clock` is the vector
+  `table` is the optional node table (`NODES_FILE`, empty here);
+  `discovery` says whether this node listens for announcements;
+  `connected` shows every connected node and how it was found
+  (Case 1); `clock` is the vector
   clock; `buffer` counts ops waiting for an earlier op (see
   [Not by hand](#not-by-hand-an-op-that-waits)).
 - `Crdt.history()`, the last 10 ops in the order this node applied
@@ -899,13 +917,13 @@ the same time without errors, and all end equal (REQ7, REQ16; MAN8).
    PowerShell (Windows):
 
    ```powershell
-   (Get-Content data\crdt3_127_0_0_1.jsonl | Measure-Object -Line).Lines
+   (Get-Content data\crdt3.jsonl | Measure-Object -Line).Lines
    ```
 
    macOS / Linux:
 
    ```sh
-   wc -l < data/crdt3_127_0_0_1.jsonl
+   wc -l < data/crdt3.jsonl
    ```
 
 **Expected**
@@ -973,13 +991,13 @@ catches up when it comes back (REQ1, REQ11, REQ12, REQ14; MAN4).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt3 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt3 --ip 127.0.0.1
    ```
 
 6. Wait about 5 seconds. Do not edit on crdt3 yet. In **crdt3**:
@@ -1008,9 +1026,11 @@ catches up when it comes back (REQ1, REQ11, REQ12, REQ14; MAN4).
   [crdt3@127.0.0.1] applied op 110 from crdt2@127.0.0.1: del "["
   ```
 
-  mixed with several hundred `duplicate dropped` lines. crdt1 and crdt2
-  print `connected crdt3@127.0.0.1: resending history (237 ops)` and
-  `hello from crdt3@127.0.0.1: resending history (237 ops)`.
+  mixed with several hundred `duplicate dropped` lines and with
+  `connected crdt1@127.0.0.1: resending history (231 ops)` and
+  `connected crdt2@127.0.0.1: resending history (237 ops)` (the count
+  grows while the missing ops arrive). crdt1 and crdt2 print
+  `connected crdt3@127.0.0.1: resending history (237 ops)`.
 - Step 6 returns `"off]aaaaaa"`.
 
 **Pass if:** crdt3's text is again equal to the others.
@@ -1037,13 +1057,13 @@ REQ14; MAN4).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt3 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt3 --ip 127.0.0.1
    ```
 
 3. In **crdt3**:
@@ -1057,13 +1077,13 @@ REQ14; MAN4).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt1 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt1 --ip 127.0.0.1
    ```
 
 5. In **crdt2**:
@@ -1071,13 +1091,13 @@ REQ14; MAN4).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt2 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt2 --ip 127.0.0.1
    ```
 
 6. Wait about 5 seconds. In **crdt1**, **crdt2** and **crdt3**:
@@ -1092,7 +1112,8 @@ REQ14; MAN4).
   `disconnected crdt1@127.0.0.1` and `disconnected crdt2@127.0.0.1`.
 - Step 2: crdt3 prints `history loaded: 237 ops` and nothing else (no
   other node is running). Step 3 returns `:ok`.
-- crdt1, besides `duplicate dropped` lines:
+- crdt1, besides `duplicate dropped` lines (the `connected` lines may
+  come in another order, between the `applied` ones):
 
   ```
   [crdt1@127.0.0.1] history loaded: 237 ops
@@ -1102,19 +1123,17 @@ REQ14; MAN4).
   [crdt1@127.0.0.1] applied op 12 from crdt3@127.0.0.1: ins "s"
   [crdt1@127.0.0.1] applied op 13 from crdt3@127.0.0.1: ins "t"
   [crdt1@127.0.0.1] applied op 14 from crdt3@127.0.0.1: ins " "
+  [crdt1@127.0.0.1] connected crdt3@127.0.0.1: resending history (237 ops)
   [crdt1@127.0.0.1] connected crdt2@127.0.0.1: resending history (243 ops)
   ```
 
-- crdt2 prints the same `history loaded` and `applied` lines, and no
-  `connected` line: crdt1 was already connected when crdt2's editor
-  started (see case 1).
+- crdt2 prints the same `history loaded` and `applied` lines, and
+  `connected` lines for crdt3 and crdt1.
 - crdt3:
 
   ```
   [crdt3@127.0.0.1] connected crdt1@127.0.0.1: resending history (243 ops)
-  [crdt3@127.0.0.1] hello from crdt1@127.0.0.1: resending history (243 ops)
   [crdt3@127.0.0.1] connected crdt2@127.0.0.1: resending history (243 ops)
-  [crdt3@127.0.0.1] hello from crdt2@127.0.0.1: resending history (243 ops)
   ```
 
 - Step 6 returns `"first off]"` on the three nodes.
@@ -1151,13 +1170,13 @@ its new ops are accepted by the others (REQ13; MAN5).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt2 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt2 --ip 127.0.0.1
    ```
 
 5. In **crdt2**:
@@ -1177,13 +1196,13 @@ its new ops are accepted by the others (REQ13; MAN5).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt1 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt1 --ip 127.0.0.1
    ```
 
 8. In **crdt3**:
@@ -1191,13 +1210,13 @@ its new ops are accepted by the others (REQ13; MAN5).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt3 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt3 --ip 127.0.0.1
    ```
 
 9. Wait about 5 seconds. In **crdt1**, **crdt2** and **crdt3**:
@@ -1211,13 +1230,13 @@ its new ops are accepted by the others (REQ13; MAN5).
     PowerShell (Windows):
 
     ```powershell
-    (Get-Content data\crdt1_127_0_0_1.jsonl | Measure-Object -Line).Lines
+    (Get-Content data\crdt1.jsonl | Measure-Object -Line).Lines
     ```
 
     macOS / Linux:
 
     ```sh
-    wc -l < data/crdt1_127_0_0_1.jsonl
+    wc -l < data/crdt1.jsonl
     ```
 
 **Expected**
@@ -1236,9 +1255,9 @@ its new ops are accepted by the others (REQ13; MAN5).
   [crdt1@127.0.0.1] applied op 114 from crdt2@127.0.0.1: ins " "
   ```
 
-  crdt1 then prints `connected crdt3@127.0.0.1: resending history
-  (247 ops)` and `hello from crdt3@127.0.0.1: resending history
-  (247 ops)`; crdt3 printed no `connected` line in the real run. Both
+  crdt1 also prints `connected crdt2@127.0.0.1: resending history
+  (243 ops)` and `connected crdt3@127.0.0.1: resending history
+  (247 ops)`; crdt3 prints `connected` lines for crdt2 and crdt1. Both
   print many `duplicate dropped`.
 - Step 9 returns `"new first "` on the three nodes. **ps** prints `247`.
 
@@ -1273,13 +1292,13 @@ as nobody edits on it before (usage rule of the README).
    PowerShell (Windows):
 
    ```powershell
-   Remove-Item data\crdt3_127_0_0_1.jsonl
+   Remove-Item data\crdt3.jsonl
    ```
 
    macOS / Linux:
 
    ```sh
-   rm data/crdt3_127_0_0_1.jsonl
+   rm data/crdt3.jsonl
    ```
 
 4. In **crdt3**, start the node again. Do not edit on it in this case:
@@ -1287,13 +1306,13 @@ as nobody edits on it before (usage rule of the README).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt3 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt3 --ip 127.0.0.1
    ```
 
 5. Wait about 5 seconds. In **crdt3**:
@@ -1307,13 +1326,13 @@ as nobody edits on it before (usage rule of the README).
    PowerShell (Windows):
 
    ```powershell
-   (Get-Content data\crdt3_127_0_0_1.jsonl | Measure-Object -Line).Lines
+   (Get-Content data\crdt3.jsonl | Measure-Object -Line).Lines
    ```
 
    macOS / Linux:
 
    ```sh
-   wc -l < data/crdt3_127_0_0_1.jsonl
+   wc -l < data/crdt3.jsonl
    ```
 
 **Expected**
@@ -1358,13 +1377,13 @@ removed and the node starts (REQ19).
    PowerShell (Windows):
 
    ```powershell
-   (Get-Item data\crdt1_127_0_0_1.jsonl).Length
+   (Get-Item data\crdt1.jsonl).Length
    ```
 
    macOS / Linux:
 
    ```sh
-   wc -c < data/crdt1_127_0_0_1.jsonl
+   wc -c < data/crdt1.jsonl
    ```
 
 3. In **ps**, add half a line at the end:
@@ -1372,13 +1391,13 @@ removed and the node starts (REQ19).
    PowerShell (Windows):
 
    ```powershell
-   Add-Content -Path data\crdt1_127_0_0_1.jsonl -Value '{"op":"ins","from":"crdt1@127' -NoNewline
+   Add-Content -Path data\crdt1.jsonl -Value '{"op":"ins","from":"crdt1@127' -NoNewline
    ```
 
    macOS / Linux:
 
    ```sh
-   printf '%s' '{"op":"ins","from":"crdt1@127' >> data/crdt1_127_0_0_1.jsonl
+   printf '%s' '{"op":"ins","from":"crdt1@127' >> data/crdt1.jsonl
    ```
 
 4. In **ps**, the size again:
@@ -1386,13 +1405,13 @@ removed and the node starts (REQ19).
    PowerShell (Windows):
 
    ```powershell
-   (Get-Item data\crdt1_127_0_0_1.jsonl).Length
+   (Get-Item data\crdt1.jsonl).Length
    ```
 
    macOS / Linux:
 
    ```sh
-   wc -c < data/crdt1_127_0_0_1.jsonl
+   wc -c < data/crdt1.jsonl
    ```
 
 5. In **crdt1**, start the node again:
@@ -1400,13 +1419,13 @@ removed and the node starts (REQ19).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt1 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt1 --ip 127.0.0.1
    ```
 
 6. In **ps**, the size once more:
@@ -1414,21 +1433,21 @@ removed and the node starts (REQ19).
    PowerShell (Windows):
 
    ```powershell
-   (Get-Item data\crdt1_127_0_0_1.jsonl).Length
+   (Get-Item data\crdt1.jsonl).Length
    ```
 
    macOS / Linux:
 
    ```sh
-   wc -c < data/crdt1_127_0_0_1.jsonl
+   wc -c < data/crdt1.jsonl
    ```
 
 **Expected**
 
-- Steps 2, 4 and 6 printed `336063`, `336092` (29 bytes more) and
-  `336063` in the real run, and `358945`, `358974` and `358945` in a
-  later run: the size depends on how the two loops of Case 10
-  interleaved, so your numbers may differ. Step 4 is always 29 bytes
+- Steps 2, 4 and 6 printed `345528`, `345557` (29 bytes more) and
+  `345528` in the real run, and other numbers in other runs: the size
+  depends on how the two loops of Case 10 interleaved, so your numbers
+  may differ. Step 4 is always 29 bytes
   more than step 2, and step 6 equals step 2.
 - Step 5, crdt1:
 
@@ -1461,7 +1480,7 @@ message; IEx stays usable (REQ19).
    PowerShell (Windows), these four commands:
 
    ```powershell
-   $f = (Resolve-Path data\crdt2_127_0_0_1.jsonl).Path
+   $f = (Resolve-Path data\crdt2.jsonl).Path
    ```
 
    ```powershell
@@ -1480,11 +1499,11 @@ message; IEx stays usable (REQ19).
    `.bak` copy, which the second one deletes):
 
    ```sh
-   sed -i.bak '5s/.*/{"op":"ins", DAMAGED/' data/crdt2_127_0_0_1.jsonl
+   sed -i.bak '5s/.*/{"op":"ins", DAMAGED/' data/crdt2.jsonl
    ```
 
    ```sh
-   rm data/crdt2_127_0_0_1.jsonl.bak
+   rm data/crdt2.jsonl.bak
    ```
 
 3. In **ps**, look at line 5:
@@ -1492,13 +1511,13 @@ message; IEx stays usable (REQ19).
    PowerShell (Windows):
 
    ```powershell
-   Get-Content data\crdt2_127_0_0_1.jsonl -TotalCount 5 | Select-Object -Last 1
+   Get-Content data\crdt2.jsonl -TotalCount 5 | Select-Object -Last 1
    ```
 
    macOS / Linux:
 
    ```sh
-   sed -n 5p data/crdt2_127_0_0_1.jsonl
+   sed -n 5p data/crdt2.jsonl
    ```
 
 4. In **crdt2**, start the node:
@@ -1506,13 +1525,13 @@ message; IEx stays usable (REQ19).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt2 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt2 --ip 127.0.0.1
    ```
 
 5. In **crdt2**:
@@ -1532,13 +1551,13 @@ message; IEx stays usable (REQ19).
    PowerShell (Windows):
 
    ```powershell
-   Remove-Item data\crdt2_127_0_0_1.jsonl
+   Remove-Item data\crdt2.jsonl
    ```
 
    macOS / Linux:
 
    ```sh
-   rm data/crdt2_127_0_0_1.jsonl
+   rm data/crdt2.jsonl
    ```
 
 8. In **crdt2**, start the node again and do not edit on it in this
@@ -1547,13 +1566,13 @@ message; IEx stays usable (REQ19).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt2 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt2@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt2 --ip 127.0.0.1
    ```
 
 9. Wait about 5 seconds. In **crdt2**:
@@ -1568,7 +1587,7 @@ message; IEx stays usable (REQ19).
 - Step 4, crdt2:
 
   ```
-  [crdt2@127.0.0.1] history corrupted at line 5 of data/crdt2_127_0_0_1.jsonl: replica not started. Delete that file and restart the node to catch up with the others. Do not edit on this node until its text matches the others.
+  [crdt2@127.0.0.1] history corrupted at line 5 of data/crdt2.jsonl: replica not started. Delete that file and restart the node to catch up with the others. Do not edit on this node until its text matches the others.
   ```
 
 - Step 5 returns `{:error, :no_replica}` (so does every `Crdt`
@@ -1603,13 +1622,13 @@ instead.
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.missing.txt"; iex.bat --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   $env:NODES_FILE="nodes.missing.txt"; .\scripts\start.ps1 -Name crdt3 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.missing.txt iex --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   NODES_FILE=nodes.missing.txt ./scripts/start.sh --name crdt3 --ip 127.0.0.1
    ```
 
 3. In **crdt3**:
@@ -1624,19 +1643,19 @@ instead.
    System.halt()
    ```
 
-5. In **crdt3**, start with the right command (on Windows it also sets
-   `NODES_FILE` back):
+5. In **crdt3**, start without `NODES_FILE` (on Windows, the first
+   command removes it from this terminal):
 
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   Remove-Item Env:NODES_FILE; .\scripts\start.ps1 -Name crdt3 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt3 --ip 127.0.0.1
    ```
 
 **Expected**
@@ -1647,9 +1666,9 @@ instead.
   [crdt3@127.0.0.1] cannot read nodes file nodes.missing.txt (no such file or directory): replica not started. Fix NODES_FILE and restart the node.
   ```
 
-- Step 3 returns `{:error, :no_replica}`. crdt1 may print
+- Step 3 returns `{:error, :no_replica}`. crdt1 and crdt2 print
   `connected crdt3@127.0.0.1: resending history (247 ops)`, harmless as
-  in case 16.
+  in case 16: discovery still runs on crdt3, only its editor is off.
 - Step 5, crdt3: `history loaded: 247 ops`.
 
 **Pass if:** step 2 shows the message with the file name, and after
@@ -1699,13 +1718,13 @@ console shows the right command (CON2).
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt3 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt3@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt3 --ip 127.0.0.1
    ```
 
 **Expected**
@@ -1713,9 +1732,9 @@ console shows the right command (CON2).
 - Step 2:
 
   ```
-  Node has no name: Crdt.Replica not started. Start it like this (docs/DESIGN.md, section 11):
-    PowerShell:   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
-    macOS, Linux: NODES_FILE=nodes.local.txt iex --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
+  Node has no name: Crdt.Replica not started. Start it with the start script (docs/DESIGN.md, section 11):
+    PowerShell:   .\scripts\start.ps1
+    macOS, Linux: ./scripts/start.sh
   ```
 
 - Step 3 returns `{:error, :no_replica}`.
@@ -1765,13 +1784,13 @@ halted first.
    PowerShell (Windows):
 
    ```powershell
-   $env:NODES_FILE="nodes.local.txt"; iex.bat --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
+   .\scripts\start.ps1 -Name crdt1 -Ip 127.0.0.1
    ```
 
    macOS / Linux:
 
    ```sh
-   NODES_FILE=nodes.local.txt iex --name crdt1@127.0.0.1 --cookie cpd2026 -S mix
+   ./scripts/start.sh --name crdt1 --ip 127.0.0.1
    ```
 
 5. In **crdt1**:
@@ -1828,7 +1847,7 @@ halted first.
 - Step 4, crdt1:
 
   ```
-  [crdt1@127.0.0.1] cannot open history file data/crdt1_127_0_0_1.jsonl (no such file or directory): replica not started. Check that the folder exists and restart the node.
+  [crdt1@127.0.0.1] cannot open history file data/crdt1.jsonl (no such file or directory): replica not started. Check that the folder exists and restart the node.
   ```
 
 - Step 5 returns `{:error, :no_replica}`. Step 6 prints `False`.
@@ -1880,13 +1899,13 @@ The two commands use the 10-second command of
    PowerShell (Windows):
 
    ```powershell
-   (Select-String -Path data\crdt3_127_0_0_1.jsonl -Pattern '"op":"del"' | Measure-Object).Count
+   (Select-String -Path data\crdt3.jsonl -Pattern '"op":"del"' | Measure-Object).Count
    ```
 
    macOS / Linux:
 
    ```sh
-   grep -c '"op":"del"' data/crdt3_127_0_0_1.jsonl
+   grep -c '"op":"del"' data/crdt3.jsonl
    ```
 
 **Expected**
@@ -2036,7 +2055,7 @@ mix test --only req9
 
 for example "a remote op that arrives before its dependency waits, then
 both apply in order" in `test/crdt_test.exs` and "(a) b2 waits, b1
-arrives: both are forwarded to the table node" in
+arrives: both are forwarded to a connected node, with no table" in
 `test/crdt_distributed_test.exs`.
 
 ## With network (two or three computers)
@@ -2047,130 +2066,43 @@ Pi. [NETWORK.md](NETWORK.md) has the full steps for a Mac and a Windows
 computer, with the Windows firewall (not yet validated on two
 computers). This section says what changes in this guide.
 
-### A temporary table
-
-1. Find the IP address of each computer.
-
-   PowerShell (Windows): line "IPv4 Address" of the Wi-Fi or Ethernet
-   adapter:
-
-   ```powershell
-   ipconfig
-   ```
-
-   macOS (Wi-Fi; `en1` on some Macs):
-
-   ```sh
-   ipconfig getifaddr en0
-   ```
-
-   Linux, for example a Raspberry Pi (the first address):
-
-   ```sh
-   hostname -I
-   ```
-
-2. On each computer, create a temporary table, outside the project
-   folder, with one `crdt@<IP>` line per computer. The lines are the
-   same on all of them. With three computers, for example:
-
-   ```
-   crdt@<WIN_IP>
-   crdt@<MAC_IP>
-   crdt@<PI_IP>
-   ```
-
-   With two computers, only their two lines.
-
-   PowerShell (Windows):
-
-   ```powershell
-   notepad $env:TEMP\nodes.net.txt
-   ```
-
-   macOS / Linux (save with Ctrl+O and Enter, leave with Ctrl+X):
-
-   ```sh
-   nano /tmp/nodes.net.txt
-   ```
-
-### The three-step test, between each pair
-
-Before starting the editor, check the connection between each pair of
-computers: with two computers, once; with three, three times (for
-example Windows and Mac, Windows and Pi, Mac and Pi). Below, `<MY_IP>`
-is the address of the computer where you type and `<OTHER_IP>` the
-address of the other one.
-
-1. Network.
-
-   PowerShell (Windows):
-
-   ```powershell
-   ping <OTHER_IP>
-   ```
-
-   macOS / Linux:
-
-   ```sh
-   ping -c 3 <OTHER_IP>
-   ```
-
-   Windows blocks incoming ping by default: a ping towards Windows may
-   fail without it being an error. The ping from Windows is what counts.
-2. Erlang distribution. On both computers of the pair:
-
-   PowerShell (Windows):
-
-   ```powershell
-   iex.bat --name crdt@<MY_IP> --cookie cpd2026
-   ```
-
-   macOS / Linux:
-
-   ```sh
-   iex --name crdt@<MY_IP> --cookie cpd2026
-   ```
-
-   Then, on one of them (on Windows, if one of the two is Windows):
-
-   ```elixir
-   Node.connect(:"crdt@<OTHER_IP>")
-   ```
-
-   It returns `true`.
-3. On the same computer:
-
-   ```elixir
-   Node.list()
-   ```
-
-   It returns `[:"crdt@<OTHER_IP>"]`. Leave both with `System.halt()`.
-
-If step 2 returns `false`, check the cookie, the firewall and, on
-Windows, that the network is private ([NETWORK.md](NETWORK.md), step 3).
-
 ### Start the nodes
 
-On each computer:
+The full steps, with the Windows firewall, are in
+[NETWORK.md](NETWORK.md) (not yet validated between computers). In
+short, once per computer: clone the repository, `mix compile`, and on
+Windows the firewall rules and the execution policy of NETWORK.md,
+section 2. Every computer needs its own hostname.
+
+On each computer, in the project folder, after deleting old histories
+(`Remove-Item data\*.jsonl` or `rm -f data/*.jsonl`):
 
 PowerShell (Windows):
 
 ```powershell
-$env:NODES_FILE="$env:TEMP\nodes.net.txt"; iex.bat --name crdt@<MY_IP> --cookie cpd2026 -S mix
+.\scripts\start.ps1
 ```
 
 macOS / Linux:
 
 ```sh
-NODES_FILE=/tmp/nodes.net.txt iex --name crdt@<MY_IP> --cookie cpd2026 -S mix
+./scripts/start.sh
 ```
 
-Each prints `history loaded: 0 ops`. Within a few seconds,
-`Crdt.status()` lists the other nodes in `connected:`. In the cases,
-read `crdt@<IP>` where the guide says `crdt1@127.0.0.1`, and the
-history file is `data/crdt_<IP with _>.jsonl`, for example
-`data/crdt_192_168_1_20.jsonl`.
+The script prints the node name it chose, `<hostname>@<IP>`, for
+example `node: pi-pe@172.20.10.4 (interface: wlan0)`. If it cannot pick
+the network adapter, it says so: give the IP with `-Ip <IP>`
+(`--ip <IP>`). Each node prints `history loaded: 0 ops`. Within a few
+seconds, `Node.list()` and `Crdt.status()` (`connected:`) list the
+other nodes, with no node table.
+
+In the cases, read that node name where the guide says
+`crdt1@127.0.0.1`, and the history file is `data/<hostname>.jsonl`, for
+example `data/pi-pe.jsonl`.
+
+If the nodes do not find each other, [NETWORK.md](NETWORK.md), section
+5: the firewall, `scripts/multicast_check.exs`, and a node table with
+`NODES_FILE` as the way out.
 
 ### The clocks and the 10-second command
 
@@ -2229,7 +2161,7 @@ drops. Disconnect a computer where you type directly.
 2. On one computer, B, disconnect it from the network: turn off its
    Wi-Fi or unplug its cable.
 3. Wait until A, the other computer, prints
-   `disconnected crdt@<B_IP>`, and B prints `disconnected` for each
+   `disconnected <B's node name>`, and B prints `disconnected` for each
    other node. It may take about a minute.
 4. On A:
 
@@ -2253,8 +2185,8 @@ drops. Disconnect a computer where you type directly.
 **Expected**
 
 - Steps 4 and 5 return `:ok` at once, also while disconnected.
-- After step 6, B prints `connected crdt@<A_IP>: resending history
-  (N ops)` (or `hello from ...`), and each computer prints
+- After step 6, B prints `connected <A's node name>: resending history
+  (N ops)`, and each computer prints
   `applied op ...` for the other's word: `ins "o"`, `ins "n"`, `ins " "`
   or `ins "o"`, `ins "f"`, `ins "f"`, `ins " "`.
 - Step 7 returns the same text on every computer, starting with

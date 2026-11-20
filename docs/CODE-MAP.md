@@ -1,7 +1,7 @@
 # Code map
 
-A guide to read the code. The code is in `lib/`: seven modules, about
-620 lines. Read [DESIGN.md](DESIGN.md) next to it; each step below
+A guide to read the code. The code is in `lib/`: eight modules, about
+760 lines. Read [DESIGN.md](DESIGN.md) next to it; each step below
 names its section. The words used here (op, PosID, tombstone, vector
 clock) are in the [glossary](MANUAL-TESTS.md#glossary).
 
@@ -46,13 +46,17 @@ API, and last the process that joins everything.
   - Why are node names strings in the file and atoms in memory?
   - What does `from_json_line/1` return for a line cut in half?
 
-### Step 4: `Crdt.Config`, the node table
+### Step 4: `Crdt.Config` and `Crdt.Discovery`, how nodes meet
 
-- Read: `nodes/0`, `parse/1`.
-- With: `DESIGN.md` DES6.
+- Read: `Crdt.Config.nodes/0`, `parse/1`; `Crdt.Discovery.init/1`,
+  `open/2`, `parse/1`, `handle_info/2`.
+- With: `DESIGN.md` DES6 and DES6.1.
 - Afterwards you can answer:
   - What happens with a Windows line ending and with a `#` line?
-  - What does the replica do if `NODES_FILE` names a missing file?
+  - What does the replica do if `NODES_FILE` names a missing file, and
+    what if `NODES_FILE` is not set?
+  - Why does only one node per computer listen for announcements?
+  - Why does a packet from another program never open a connection?
 
 ### Step 5: `Crdt` and `Crdt.Application`, the entry points
 
@@ -70,13 +74,14 @@ API, and last the process that joins everything.
 
 - Read: `init/1`, `start/6`, `load_history/2`, `read_lines/4`,
   `handle_call/3` (insert), `local_edit/2`, `local_op/2`, `write_log/2`,
-  `handle_cast/2`, `handle_event/2`, `handle_info/2`, `broadcast/2`.
+  `handle_cast/2`, `handle_event/2`, `handle_info/2`, `broadcast/1`.
 - With: `DESIGN.md` DES4.4, DES4.5, DES6, DES7 and DES7.1.
 - Afterwards you can answer:
   - Why does nothing leave the node before `:file.sync/1`?
   - Why does `Node.connect/1` run in a separate process?
   - Why does the replica resend its whole history on `:nodeup` and on
     `{:hello, node}`?
+  - Why does the history file not change when the IP changes?
 
 ## 2. Module map
 
@@ -149,11 +154,12 @@ this project that each function calls.
 
 ### `Crdt.Config` (`lib/crdt/config.ex`)
 
-- Responsibility: reads the node table. Reads a file.
-- Data: none. The file name comes from `NODES_FILE` (default
-  `nodes.local.txt`).
-- `nodes/0` (public): `{:ok, file, nodes}` or `{:error, file, reason}`.
-  Calls `parse/1`. DES6.
+- Responsibility: reads the optional node table. Reads a file.
+- Data: none. The file name comes from `NODES_FILE`; without it the
+  table is empty.
+- `nodes/0` (public): `{:ok, file, nodes}`, `{:ok, "none", []}` without
+  `NODES_FILE`, or `{:error, file, reason}`. Calls `read/1`. DES6.
+- `read/1` (private): reads the file. Calls `parse/1`. DES6.
 - `parse/1` (private): one name per line, trimmed; skips blank and `#`
   lines. DES6.
 
@@ -179,8 +185,44 @@ this project that each function calls.
   name.
 - Data: none.
 - `start/2` (public): starts `Crdt.Supervisor`. Calls `children/0`. DES6.
-- `children/0` (private): `[Crdt.Replica]` on a named node; otherwise
-  prints the start commands and returns `[]`. DES6, DES11.
+- `children/0` (public): `[Crdt.Replica, Crdt.Discovery]` on a named
+  node, `[Crdt.Replica]` with `DISCOVERY=off`; otherwise calls
+  `no_name/0`. DES6, DES6.1.
+- `no_name/0` (private): prints the start commands and returns `[]`.
+  DES6, DES11.
+
+### `Crdt.Discovery` (`lib/crdt/discovery.ex`)
+
+- Responsibility: announces the node on the local network and connects
+  to the nodes it hears. UDP multicast.
+- Data, the fields of the state:
+  - `me`: the name it announces.
+  - `port`: the discovery port, 45892.
+  - `socket`: the UDP socket.
+  - `mode`: `"listening on 45892"` or `"announce only"`.
+  - `heard`: the node names heard, for `Crdt.status()`.
+- Messages it handles: `:announce` (every 2 seconds), UDP packets
+  `{:udp, socket, ip, port, data}`, and the call `:info`.
+- `start_link/1` (public): starts the GenServer with the options `:me`,
+  `:ip` and `:port`. DES8.
+- `info/0` (public): `{mode, heard}`, for `Crdt.status()`. DES9.
+- `packet/1` (public): the text `crdt-treedoc-1 <node name>`. DES6.1.
+- `parse/1` (public): `{:ok, node}` if the packet has the tag, otherwise
+  `:ignore`. DES6.1.
+- `init/1` (public): opens the socket and sends the first `:announce`;
+  `:ignore` with a message if no socket can be opened. Calls
+  `interface/1`, `open/2`. DES6.1, DES6.
+- `interface/1` (private): the IPv4 of the node name, or `{0, 0, 0, 0}`.
+  DES6.1.
+- `open/2` (private): listens on the port, or, if it is busy, opens a
+  socket on a free port that only announces. Calls `listen/3`. DES6.1.
+- `listen/3` (private): the socket on the port, joined to the group.
+  DES6.1.
+- `handle_call/3` (public): `:info`. DES9.
+- `handle_info/2` (public): `:announce` sends `packet/1` and repeats in
+  2 seconds; a packet with the tag, not its own and not of a connected
+  node, spawns one `Node.connect/1`. Calls `packet/1`, `parse/1`.
+  DES6.1, DES7.1.
 
 ### `Crdt.Replica` (`lib/crdt/replica.ex`)
 
@@ -190,7 +232,7 @@ this project that each function calls.
   - `me`: this node's name.
   - `nodes_file`: where the table came from, for `Crdt.status()`.
   - `nodes`: the node table, a list of atoms.
-  - `path`: the history file, for example `data/crdt1_127_0_0_1.jsonl`.
+  - `path`: the history file, for example `data/crdt1.jsonl`.
   - `log`: the history file, open for appending.
   - `doc`: the `Crdt.Treedoc` state.
   - `vc`: the vector clock.
@@ -209,12 +251,12 @@ this project that each function calls.
   `history_path/2`, `load_history/2`, `start/6`. DES4.4, DES6.
 - `node_table/1` (private): the `:nodes` option or
   `Crdt.Config.nodes/0`. DES6.
-- `history_path/2` (private): `<data_dir>/<me>.jsonl`, with `@` and `.`
-  changed to `_`. DES4.5.
+- `history_path/2` (private): `<data_dir>/<name>.jsonl`, with the part
+  of the node name before `@`. DES4.5.
 - `start/6` (private): rebuilds `doc`, `vc` and `history` from the file
   with `Crdt.Treedoc.effect/2`, turns on `:net_kernel.monitor_nodes/1`,
   sends the history and `{:hello, me}`, starts the `:connect` timer.
-  Calls `send_history/1`, `broadcast/2`. DES4.4, DES4.5.
+  Calls `send_history/1`, `broadcast/1`. DES4.4, DES4.5.
 - `load_history/2` (private): reads and checks the file, then opens it
   for appending. Calls `read_file/1`, `check_lines/3`. DES4.5.
 - `read_file/1` (private): a missing file is an empty history. DES4.5.
@@ -237,22 +279,24 @@ this project that each function calls.
   `Node.connect/1` per missing node and repeats every 2 seconds. DES4.4,
   DES6, DES7.1.
 - `local_edit/2` (private): every character of one call, then one write
-  and the broadcast. Calls `local_op/2`, `write_log/2`, `broadcast/2`.
+  and the broadcast. Calls `local_op/2`, `write_log/2`, `broadcast/1`.
   DES4.5, DES7.
 - `local_op/2` (private): one character. Calls
   `Crdt.Causal.next_local/2`, `Crdt.Treedoc.prepare/3`,
   `Crdt.Treedoc.effect/2`. DES4.1.
 - `handle_event/2` (private): `applied` writes, prints and forwards;
   `waiting` and `duplicate` only print. Calls `write_log/2`,
-  `broadcast/2`, `describe/2`, `waiting_text/2`. DES4.2, DES4.3, DES4.5.
+  `broadcast/1`, `describe/2`, `waiting_text/2`. DES4.2, DES4.3, DES4.5.
 - `resend_history/2` (private): prints the notice and calls
   `send_history/1`. DES4.4.
 - `send_history/1` (private): `{:remote, msg}` for every op of the
-  history, in order. Calls `broadcast/2`. DES4.4.
-- `broadcast/2` (private): `GenServer.cast/2` to every node that is
-  connected and in the table. DES6.
+  history, in order. Calls `broadcast/1`. DES4.4.
+- `broadcast/1` (private): `GenServer.cast/2` to every connected node.
+  DES6.
 - `status_lines/1` (private): the lines of `Crdt.status()`. Calls
-  `waiting_text/2`. DES9.
+  `Crdt.Discovery.info/0`, `found/3`, `waiting_text/2`. DES9.
+- `found/3` (private): how a connected node was found: `table`,
+  `announced` or `other`. DES9.
 - `waiting_text/2` (private): the `waiting` line. Calls
   `Crdt.Causal.missing/2`. DES9.
 - `describe/2` (private): `op N from node: ins "a"`, also for a delete.
@@ -281,7 +325,7 @@ sequenceDiagram
     R1->>F: :file.open(path, [:append, :binary])
     R1->>R1: :net_kernel.monitor_nodes(true)
     R1->>R2: send_history/1: {:remote, msg} per op
-    R1->>R2: broadcast/2: {:hello, me}
+    R1->>R2: broadcast/1: {:hello, me}
     R1->>R1: send(self(), :connect)
 ```
 
@@ -311,10 +355,10 @@ sequenceDiagram
         R1->>T: effect/2
     end
     R1->>F: write_log/2: :file.write/2, :file.sync/1
-    R1->>R2: broadcast/2: {:remote, msg} per op
+    R1->>R2: broadcast/1: {:remote, msg} per op
     R1-->>C: :ok
     R2->>R2: handle_cast/2: Crdt.Causal.receive_message/3
-    R2->>R1: handle_event/2: broadcast/2, {:remote, msg}
+    R2->>R1: handle_event/2: broadcast/1, {:remote, msg}
     R1->>R1: handle_cast/2: duplicate dropped
 ```
 
@@ -344,8 +388,8 @@ sequenceDiagram
     Ca->>Ca: step/3: deliverable?/2, Crdt.Treedoc.effect/2, then drain/2
     Ca-->>R3: [{:applied, op 1}, {:applied, op 2}]
     R3->>F: handle_event/2: write_log/2
-    R3->>R1: broadcast/2: {:remote, msg}, forward
-    R3->>R2: broadcast/2: {:remote, msg}, forward
+    R3->>R1: broadcast/1: {:remote, msg}, forward
+    R3->>R2: broadcast/1: {:remote, msg}, forward
     R1->>R1: handle_cast/2: duplicate?/2, duplicate dropped
 ```
 
@@ -360,29 +404,29 @@ others and are dropped, so forwarding ends (`DESIGN.md` DES4.2, DES4.3).
 ```mermaid
 sequenceDiagram
     autonumber
-    participant R1 as Crdt.Replica (crdt1)
+    participant D2 as Crdt.Discovery (crdt2)
+    participant D1 as Crdt.Discovery (crdt1)
     participant P as spawned process (crdt1)
-    participant NK as Erlang distribution
+    participant R1 as Crdt.Replica (crdt1)
     participant R2 as Crdt.Replica (crdt2)
-    R1->>R1: handle_info/2: :connect, Process.send_after/3 (2 s)
-    R1->>P: spawn/1
-    P->>NK: Node.connect/1
-    NK-->>R1: {:nodeup, node}
+    D2->>D1: handle_info/2: :announce, packet/1 (UDP, every 2 s)
+    D1->>D1: handle_info/2: parse/1, not me, not in Node.list()
+    D1->>P: spawn/1
+    P->>R1: Node.connect/1, then {:nodeup, node}
     R1->>R2: resend_history/2: {:remote, msg} per op
-    Note over R2: the replica may not exist yet: the messages are lost
-    R2->>R2: init/1, start/6
-    R2->>R1: send_history/1: {:remote, msg} per op
-    R2->>R1: broadcast/2: {:hello, node}
-    R1->>R2: handle_cast/2: resend_history/2, {:remote, msg} per op
     R2->>R2: handle_cast/2: applied or duplicate dropped
-    NK-->>R1: {:nodedown, node}: disconnected
+    R2->>R1: {:nodeup, node}: resend_history/2
+    D2->>D1: next :announce: already connected, no connect
+    R1-->>R1: {:nodedown, node}: disconnected
 ```
 
-`Node.connect/1` runs in a short-lived process, so a slow connect never
-blocks the replica. Erlang may connect the nodes before crdt2's replica
-exists; the history crdt1 sends on `:nodeup` is then lost. The
-`{:hello, node}` of crdt2's start asks for it again. Only nodes of the
-table are answered (`DESIGN.md` DES4.4, DES6, DES7.1).
+crdt1 listens on the discovery port; crdt2, on the same computer, only
+announces. `Node.connect/1` runs in a short-lived process, so a slow
+connect never blocks anything. Both replicas get `:nodeup` and resend
+their history to every connected node. The node table works the same
+way, from `Crdt.Replica`'s `:connect` timer. If Erlang connects the
+nodes before a replica exists, the `{:hello, node}` of its start asks
+for the history again (`DESIGN.md` DES4.4, DES6, DES6.1, DES7.1).
 
 ## 4. Explore it live
 
@@ -428,9 +472,9 @@ In **crdt1**: `Crdt.insert(0, "ab")`. Then in **crdt2**:
 
 ```
 %{
-  nodes: [:"crdt1@127.0.0.1", :"crdt2@127.0.0.1", :"crdt3@127.0.0.1"],
-  log: #PID<20540.147.0>,
-  path: "data/crdt2_127_0_0_1.jsonl",
+  nodes: [],
+  log: #PID<20780.146.0>,
+  path: "data/crdt2.jsonl",
   buffer: [],
   doc: %{
     dead: MapSet.new([]),
@@ -442,24 +486,27 @@ In **crdt1**: `Crdt.insert(0, "ab")`. Then in **crdt2**:
   history: [
     %{
       op: :ins,
+      from: :"crdt1@127.0.0.1",
       vc: %{"crdt1@127.0.0.1": 1},
       pos: [{1, 1, :"crdt1@127.0.0.1"}],
-      from: :"crdt1@127.0.0.1",
       ch: "a"
     },
     %{
       op: :ins,
+      from: :"crdt1@127.0.0.1",
       vc: %{"crdt1@127.0.0.1": 2},
       pos: [{1, 1, :"crdt1@127.0.0.1"}, {1, 2, :"crdt1@127.0.0.1"}],
-      from: :"crdt1@127.0.0.1",
-      ...
+      ch: "b"
     }
   ],
+  me: :"crdt2@127.0.0.1",
+  vc: %{...},
   ...
 }
 ```
 
 - These are the fields of section 2. IEx cuts long values with `...`.
+  `nodes` is empty: there is no node table, discovery found the nodes.
 - `"b"` is the right child of `"a"`: it was typed after it.
 - `log` is the open history file (an Erlang process).
 
@@ -485,7 +532,7 @@ shows each message and the new state after it (cut here):
                                         vc => #{'crdt1@127.0.0.1' => 3},
                                         ch => <<"c">>}}
 [crdt2@127.0.0.1] applied op 3 from crdt1@127.0.0.1: ins "c"
-*DBG* 'Elixir.Crdt.Replica' new state #{nodes =>
+*DBG* 'Elixir.Crdt.Replica' new state #{nodes => [],log => <0.146.0>,
 ...
 *DBG* 'Elixir.Crdt.Replica' got cast {remote,
 ...

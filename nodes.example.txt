@@ -1,0 +1,12 @@
+# Example node table (optional; docs/NETWORK.md, section 5).
+# Discovery finds our nodes on the local network by itself. A table is
+# only for nodes that discovery cannot reach (multicast blocked, another
+# network). One node name per line, as the start script prints it;
+# lines that start with # are comments. One line is enough: when two
+# nodes connect, Erlang connects the others they know.
+# Use it with NODES_FILE, for example:
+#   PowerShell:   $env:NODES_FILE="nodes.txt"; .\scripts\start.ps1
+#   macOS, Linux: NODES_FILE=nodes.txt ./scripts/start.sh
+#
+# crdt-pi1@192.0.2.10
+# crdt-pi2@192.0.2.11

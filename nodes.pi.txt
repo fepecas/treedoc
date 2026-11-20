@@ -1,3 +1,0 @@
-# Nodes on the Raspberry Pis (hostname.local)
-crdt@crdt-pi1.local
-crdt@crdt-pi2.local

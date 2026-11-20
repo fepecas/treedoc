@@ -264,9 +264,10 @@ defmodule CrdtTest do
                """
                node: a@x
                nodes file: option :nodes
-               history file: #{Path.join(dir, "a_x.jsonl")}
+               history file: #{Path.join(dir, "a.jsonl")}
                table: []
-               connected: []
+               discovery: off
+               connected: none
                clock: #{inspect(%{@me => 2})}
                history: 2 ops
                buffer: 0 ops
@@ -315,7 +316,9 @@ defmodule CrdtTest do
 
   @tag :req12
   @tag :req17
-  test "nodeup, nodedown and hello count only for nodes in the table", %{tmp_dir: dir} do
+  @tag :req15
+  test "nodeup, nodedown and hello count for every node, also outside the table",
+       %{tmp_dir: dir} do
     # the table includes me, which is skipped when connecting
     opts = [me: @me, nodes: [@me, @b], data_dir: dir, name: :with_table]
     {pid, io} = start_quiet(Supervisor.child_spec({Replica, opts}, id: :with_table))
@@ -335,6 +338,9 @@ defmodule CrdtTest do
               [a@x] connected b@x: resending history (0 ops)
               [a@x] disconnected b@x
               [a@x] hello from b@x: resending history (0 ops)
+              [a@x] connected z@x: resending history (0 ops)
+              [a@x] disconnected z@x
+              [a@x] hello from z@x: resending history (0 ops)
               """}
   end
 
