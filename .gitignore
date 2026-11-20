@@ -1,0 +1,26 @@
+# Mix build output.
+/_build/
+
+# Output of "mix test --cover".
+/cover/
+
+# Downloaded dependencies (the project has none, CON1).
+/deps/
+
+# Generated docs.
+/doc/
+
+# Temporary files, e.g. from tests.
+/tmp/
+
+# Dump written when the VM crashes.
+erl_crash.dump
+
+# Archives from "mix archive.build".
+*.ez
+
+# Package from "mix hex.build".
+crdt-*.tar
+
+# Per-node history: not committed (only data/.gitkeep).
+data/*.jsonl
