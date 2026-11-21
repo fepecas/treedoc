@@ -1,76 +1,116 @@
 # Integration
 
-The contract for another team that wants its nodes to talk to ours.
-There are three levels. A and B are supported and described here. C is
-out of scope. The words used here (op, PosID, vector clock, tombstone)
-are in the [glossary](MANUAL-TESTS.md#glossary).
+How another team, or a classmate, can join our nodes. There are three
+levels; each one builds on the one before. The words used here (op,
+PosID, vector clock, tombstone) are in the
+[glossary](MANUAL-TESTS.md#glossary).
 
-The contract needs Erlang distribution, so Elixir or Erlang is the simple
-path; other languages need an Erlang distribution library.
-
-- [A. Connect](#a-connect)
-- [B. Receive and send our operations](#b-receive-and-send-our-operations)
-- [C. Edit together for real](#c-edit-together-for-real)
+- [Security first](#security-first)
+- [L1. Join the Erlang cluster](#l1-join-the-erlang-cluster)
+- [L2. Compatible discovery](#l2-compatible-discovery)
+- [L3. Edit the same document](#l3-edit-the-same-document)
+- [Add another Raspberry Pi](#add-another-raspberry-pi)
 - [Minimal example](#minimal-example)
 - [Where to start](#where-to-start)
 
-## A. Connect
+The contract needs Erlang distribution, so Elixir or Erlang is the
+simple path; other languages need an Erlang distribution library.
 
-- Our nodes use Erlang distribution (`DESIGN.md` DES6).
+## Security first
+
+The cookie `cpd2026` is shared by the whole course. Anyone who has it
+and reaches your node can run any code on it (for example with
+`:rpc.call/4`), with your user's rights. Run nodes only on trusted
+networks (your home Wi-Fi, a phone hotspot, a lab you trust), never on
+a public network, and halt them when you are done.
+
+## L1. Join the Erlang cluster
+
+What any Erlang node needs to connect to ours (`DESIGN.md` DES6).
+
 - Cookie: `cpd2026`. Only nodes with the same cookie connect.
-- Long names: `--name name@IP`. Our nodes are named
-  `<hostname>@<IPv4>`, for example `crdt-pi1@192.168.1.21`, by our start
-  scripts. Short names (`--sname`) cannot talk to long names.
-- Ports: EPMD on TCP 4369, plus one distribution port per node. Our
+- Long names: `--name name@IPv4`. Our nodes are named
+  `<hostname>@<IPv4>`, for example `pi-pe@172.20.10.4`, by our start
+  scripts. Short names (`--sname`) cannot talk to long names. Use the
+  IPv4 of the network you share with us, never `.local`.
+- The node name travels to every node and is stored in every op. On a
+  corporate computer, choose a neutral name: `-Name <name>` or
+  `--name <name>` with our scripts, or your own `--name`.
+- Ports: EPMD on TCP 4369, and one distribution port per node. Our
   start scripts fix it to the range 4218 to 4228
-  (`-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228`, for
-  example in `ERL_AFLAGS`). Our discovery uses UDP 45892.
-- Firewall: allow those ports. How, on Windows and macOS:
-  [NETWORK.md](NETWORK.md), section 2.
+  (`ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228"`).
+- Firewall: allow TCP 4369 and TCP 4218 to 4228 (and UDP 45892 for L2).
+  On Windows the network profile must be Private. Exact commands for
+  Windows and macOS: [NETWORK.md](NETWORK.md), section 2.
 - OTP versions: "Erlang nodes can communicate across at least two
   preceding and two subsequent releases"
   ([Erlang documentation](https://www.erlang.org/doc/system/misc.html),
-  "Compatibility"). Our nodes run OTP 27 or later. Check yours:
+  "Compatibility"). Our nodes have run on OTP 27 (Raspberry Pi) and OTP
+  29 (Windows and macOS), together. Check yours:
 
   ```elixir
   :erlang.system_info(:otp_release)
   ```
 
-  It returns, for example, `~c"27"`.
-- Check the connection before any code of ours (ping,
-  `Node.connect/1`, `Node.list()`): [NETWORK.md](NETWORK.md), section 5.
+- Connect: `Node.connect(:"<one of our node names>")` returns `true`.
+  Erlang then connects you to every node that one knows. Check with
+  `Node.list()`. If it fails: [NETWORK.md](NETWORK.md), section 5.
+- A node started with `--hidden` is not in `Node.list()` and receives
+  none of our ops.
 
-## B. Receive and send our operations
+## L2. Compatible discovery
 
-### Connect to one of our nodes
+Our nodes find each other with a UDP multicast announcement
+(`DESIGN.md` DES6.1). A node of yours can announce itself the same way,
+so ours connect to it with no `Node.connect/1` on either side. The
+values, from `lib/crdt/discovery.ex`:
 
-- Our nodes send to every connected node (`Node.list()`, `DESIGN.md`
-  DES6). No table is needed: call `Node.connect/1` with the name of one
-  of our nodes, as its start script printed it. Erlang then connects
-  you to the others it knows.
-- Or ask us to put your exact node name, for example
-  `team@192.168.1.30`, in the node table (`NODES_FILE`) of one of our
-  nodes: it connects to you every 2 seconds until it reaches you.
-- Our discovery only acts on packets with our tag
-  (`crdt-treedoc-1 <node name>`, UDP 45892, `DESIGN.md` DES6.1). You may
-  send that packet too, but `Node.connect/1` is simpler.
-- A node with a hidden name (`--hidden`) is not in `Node.list()` and
-  receives nothing.
+- Group `233.252.1.32`, UDP port `45892`.
+- TTL 1 (it does not leave the local network); multicast loop on.
+- Every 2 seconds, one packet whose bytes are the text
+  `crdt-treedoc-1 ` (with the space) followed by the full node name,
+  with no newline. For example: `crdt-treedoc-1 pi-pe@172.20.10.4`.
+- Send it on the interface of the IPv4 in your node name.
+- Our nodes act only on packets that start with that tag. If the name
+  is not their own and not already connected, they call
+  `Node.connect/1` on it. Anything else is ignored.
+- To hear ours, join the group on your interface and read the same
+  packets. Only one socket per computer can listen on the port; a
+  second node on the same computer only announces.
+- `elixir scripts/multicast_check.exs <your IPv4>` tells whether the
+  network carries multicast at all.
 
-### Receive
+L2 is optional: L1 with `Node.connect/1`, or a node table
+(`NODES_FILE`) on one of our nodes, gives the same cluster.
+
+## L3. Edit the same document
+
+To edit with us, a node either runs our program (the simple way: clone
+this repository and use the start script) or speaks our operation
+protocol, described here (`DESIGN.md` DES3 to DES5).
+
+### The target process
 
 - Register a process under the name `Crdt.Replica`. In Erlang the name
   is `'Elixir.Crdt.Replica'`.
 - It receives two kinds of `GenServer` casts. A GenServer gets them in
   `handle_cast/2`. A plain process gets `{:"$gen_cast", message}`.
   - `{:remote, msg}`: one operation (format below).
-  - `{:hello, node}`: a node of ours started. It asks you to send your
-    whole history again.
-- Each of our nodes forwards every op it applies to every connected
-  node. You get each op several times: drop the copies.
-- When you connect, and when you send us `{:hello, node()}`, each of
-  our nodes sends you its whole history, one `{:remote, msg}` per op,
-  in order.
+  - `{:hello, node}`: a node started. It asks you to send your whole
+    history again.
+- A node without a process `Crdt.Replica` drops our casts silently.
+
+### History exchange
+
+- Our nodes send every op to every connected node, and forward each op
+  they apply once, unchanged (`DESIGN.md` DES4.3). You get each op
+  several times: drop the copies.
+- When you connect (`{:nodeup, node}` on our side), and when you send
+  us `{:hello, node()}`, each of our nodes sends you its whole history,
+  one `{:remote, msg}` per op, in the order it applied them
+  (`DESIGN.md` DES4.4).
+- To get our ops you must apply them in causal order: apply, wait or
+  drop by the vector clock (`DESIGN.md` DES4.2).
 
 ### Send
 
@@ -92,9 +132,12 @@ In Erlang: `gen_server:cast({'Elixir.Crdt.Replica', 'crdt1@192.168.1.21'}, {remo
   that node. For every other node, how many of its ops you had applied.
 - `pos`: the PosID, a path from the root. Each step is `{bit, seq,
   node}`: bit 0 is left, 1 is right; `{seq, node}` is the disambiguator
-  (`DESIGN.md` DES3.1, DES3.2).
+  (`DESIGN.md` DES3.1, DES3.2). Paths are ordered by in-order traversal;
+  steps with the same bit, by the disambiguator, `seq` first and then
+  the node name (PAP3.1, PAP3.3.1, `DESIGN.md` DES3.3).
 - `ch`: the character, one grapheme.
-- A delete names the PosID of the character it deletes.
+- A delete names the PosID of the character it deletes; the character
+  stays as a tombstone.
 
 ### Rules for an op you send us
 
@@ -127,18 +170,41 @@ foreign node (section "Minimal example").
      seconds stop the editor on that node (the default of the
      supervisor, `DESIGN.md` DES4.5; not tested).
 
-## C. Edit together for real
+### A full implementation
 
-To keep a copy of the document that converges with ours, a node needs:
-
-- Treedoc with our PosIDs and our comparison (`DESIGN.md` DES3.3).
-- Causal delivery with vector clocks: apply, wait or drop (DES4.2).
-- Forwarding of every applied op, once (DES4.3), and a history that is
-  sent again on connection and on `hello` (DES4.4).
-
-This is out of scope: we document it, we do not support it. A
+To keep a copy of the document that converges with ours, a node needs
+Treedoc with our PosIDs and our comparison (`DESIGN.md` DES3.3), causal
+delivery with vector clocks (DES4.2), forwarding of every applied op
+once (DES4.3), and a history sent again on connection and on `hello`
+(DES4.4). We document it; we do not support other implementations. A
 different CRDT (RGA, Logoot) cannot interoperate with ours: its
 positions do not compare with our PosIDs.
+
+## Add another Raspberry Pi
+
+1. Raspberry Pi OS (64-bit) with its own hostname: two Pis left as
+   `raspberrypi` would collide (`sudo hostnamectl set-hostname <name>`,
+   then `sudo reboot`).
+2. Elixir 1.18 or later with Erlang/OTP 27 to 29:
+   `sudo apt install -y elixir git` (Raspberry Pi OS trixie gives
+   Elixir 1.18.3 with OTP 27).
+3. The same network as the other nodes.
+4. Clone and start:
+
+   ```sh
+   git clone <repository URL> ~/crdt
+   cd ~/crdt
+   mix compile
+   mix test
+   ./scripts/start.sh
+   ```
+
+   It prints its node name, `<hostname>@<IPv4>`; `hostname -I` shows
+   the IPv4. Within a few seconds `Node.list()` shows the other nodes
+   and the text arrives.
+
+A Raspberry Pi 4 can also run our node as Nerves firmware, with no
+Raspberry Pi OS: see [README-nerves.md](../deploy/README-nerves.md).
 
 ## Minimal example
 
@@ -196,9 +262,8 @@ It returns `:ok`. crdt1 prints
 `connected team@127.0.0.1: resending history (0 ops)` and
 `hello from team@127.0.0.1: resending history (0 ops)`; crdt2 prints
 `connected team@127.0.0.1: ...`, because Erlang connected your node to
-crdt2 too. Now, on crdt1,
-`Crdt.insert(0, "hola")`. Your console shows each op, twice (from crdt1
-and forwarded by crdt2), for example:
+crdt2 too. Now, on crdt1, `Crdt.insert(0, "hola")`. Your console shows
+each op, twice (from crdt1 and forwarded by crdt2), for example:
 
 ```
 Crdt.Replica got: {:"$gen_cast",

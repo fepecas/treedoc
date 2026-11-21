@@ -37,7 +37,16 @@ The words used in this guide and in the other documents:
 - **Op**: one change to one character, an insert (`ins`) or a delete
   (`del`). `op 3 from crdt1` is the third op typed on crdt1.
 - **History file**: `data\<name>.jsonl` (the node name before `@`), one
-  op per line, in JSON. A node reloads it when it restarts.
+  op per line, in JSON. A node reloads it when it restarts. On Nerves it
+  is `/data/crdt/<name>.jsonl`.
+- **Nerves**: a way to run Elixir on a small device such as a Raspberry
+  Pi 4: a minimal Linux that boots straight into the Erlang virtual
+  machine and our code, with nothing to install on the device.
+- **Firmware**: the image burned on the Pi's microSD card with Nerves
+  (`firmware/` builds it). It starts our node by itself.
+- **`/data`**: the writable partition of a Pi with Nerves; the rest is
+  read-only. It survives firmware updates; burning the card again
+  clears it.
 - **Discovery**: each node announces its name on the local network every
   2 seconds; the nodes that hear it connect to it. No node table is
   needed.
@@ -80,6 +89,8 @@ The words used in this guide and in the other documents:
 | [Case 22](#case-22-clean-up) | Clean up |
 | [Not by hand: "waiting"](#not-by-hand-an-op-that-waits) | Why "waiting" does not show up here |
 | [With network (two or three computers)](#with-network-two-or-three-computers) | One node per computer: the start script, the clocks, which cases apply |
+| [Between computers: tests run](#between-computers-tests-run-man9-to-man13) | MAN9 to MAN13: two computers, a computer and a Pi, three operating systems |
+| [A Pi 4 with Nerves](#a-pi-4-with-nerves-man14-and-man15) | MAN14 (passed) and MAN15 (pending): a Pi with Nerves firmware and a Mac |
 | [Network case](#network-case-edit-while-disconnected) | Edit while disconnected, then converge (no clock needed) |
 
 ## Before you start
@@ -2062,14 +2073,15 @@ arrives: both are forwarded to a connected node, with no table" in
 
 The same system runs with one node on each of two or three computers on
 the same network, for example a Windows computer, a Mac and a Raspberry
-Pi. [NETWORK.md](NETWORK.md) has the full steps for a Mac and a Windows
-computer, with the Windows firewall (not yet validated on two
-computers). This section says what changes in this guide.
+Pi. [NETWORK.md](NETWORK.md) has the full steps, with the Windows
+firewall. This section says what changes in this guide; the tests
+already run between computers are
+[MAN9 to MAN13](#between-computers-tests-run-man9-to-man13).
 
 ### Start the nodes
 
 The full steps, with the Windows firewall, are in
-[NETWORK.md](NETWORK.md) (not yet validated between computers). In
+[NETWORK.md](NETWORK.md). In
 short, once per computer: clone the repository, `mix compile`, and on
 Windows the firewall rules and the execution policy of NETWORK.md,
 section 2. Every computer needs its own hostname.
@@ -2218,6 +2230,182 @@ With three nodes (one per computer), besides the above:
 - Case 12 and Case 13: the start order and a restart with the others
   off, one node per computer.
 - The network case above, with the third node on A's side.
+- MAN9 to MAN13, below: the tests already run between computers.
 
 Cases 14 to 19 are about the files and the start of one node: do them
 on one computer, with the rest of this guide.
+
+## Between computers: tests run (MAN9 to MAN13)
+
+These tests were run for real in November 2026 with three machines,
+each with a clone of this repository and started with its start
+script, with no node table:
+
+- **win-a**: Windows, Elixir 1.20.4 with OTP 29.
+- **laptop-b**: macOS, Elixir 1.20.5 with OTP 29.
+- **pi-pe**: Raspberry Pi 4 (4 GB), Raspberry Pi OS 64-bit (trixie),
+  Elixir 1.18.3 with OTP 27.
+
+On every machine `mix test` passed first (on macOS and Linux: 84 run,
+11 excluded, 0 failures). The start script picked the Wi-Fi by itself:
+`en0` on macOS, `wlan0` on the Pi, `Wi-Fi` on Windows (not Hyper-V).
+The addresses below are examples: use the ones your scripts print.
+
+### MAN9: two computers find each other
+
+**Goal:** two computers on the same Wi-Fi form one cluster by
+discovery (REQ5, REQ6, REQ14, CON3).
+
+**Steps**
+
+1. Windows only, once per network: the network profile must be
+   Private ([NETWORK.md](NETWORK.md), section 2). In the real run it was
+   Public at first and nothing connected; after
+   `Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private`
+   the nodes connected by themselves, without restarting.
+2. On win-a: `.\scripts\start.ps1`. On laptop-b: `./scripts/start.sh`.
+3. On each: `Node.list()` and `Crdt.status()`.
+4. On win-a: `Crdt.insert(0, "hola")`. On laptop-b: `Crdt.text()`.
+5. On laptop-b: `Crdt.insert(4, " mac")`. On win-a: `Crdt.text()`.
+
+**Result (real run, home Wi-Fi):** each node listed the other with no
+`NODES_FILE` and no `Node.connect/1`; both edits replicated, the texts
+were equal on both computers.
+
+### MAN10: a computer goes off and catches up
+
+**Goal:** an edit made while one computer is off reaches it when it
+comes back (REQ10, REQ12).
+
+**Steps**
+
+1. With MAN9 running, on laptop-b: `System.halt()`. win-a prints
+   `disconnected laptop-b@<IP>`.
+2. On win-a: `Crdt.insert(5, "x")` (any valid index).
+3. On laptop-b: `./scripts/start.sh` again, and wait.
+4. On both: `Crdt.text()`.
+
+**Result (real run):** laptop-b reconnected by itself after about 30
+seconds on the home Wi-Fi (observed, not measured; later, on the phone
+hotspot, reconnection was immediate). Each side resent its whole
+history (25 ops) and dropped every copy it already had (`duplicate
+dropped`). The texts were identical.
+
+### MAN11: a computer, a Pi and a late third machine
+
+**Goal:** a node that starts late gets everything, on three machines
+and three operating systems (REQ7, REQ12, CON3).
+
+**Steps**
+
+1. All on a phone hotspot (for example `172.20.10.0/28`).
+2. On pi-pe (for example `172.20.10.4`): `./scripts/start.sh` and edit
+   alone, for example `Crdt.insert(0, "pi")`.
+3. On win-a (for example `172.20.10.3`): `.\scripts\start.ps1`.
+4. Later, on laptop-b: `./scripts/start.sh`.
+5. On the three: `Crdt.text()`.
+
+**Result (real run):** win-a connected at once, applied 15 ops and
+dropped 25 duplicates; the texts were identical. laptop-b joined later
+and received everything: the same text on the three machines, Windows,
+macOS and Raspberry Pi OS.
+
+### MAN12: concurrent words stay whole
+
+**Goal:** two nodes insert at the same position at the same time; each
+word stays in one block, in the same order everywhere (REQ8, REQ20).
+
+**Steps**
+
+1. With two or three computers connected, insert a word at the same
+   position on two nodes at the same time, for example
+   `Crdt.insert(0, "AAA")` on one and `Crdt.insert(0, "BBB")` on the
+   other. Between computers, the
+   [network case](#network-case-edit-while-disconnected) makes sure the
+   two edits are concurrent.
+2. On every node: `Crdt.text()`.
+
+**Result (real run):** the words were not interleaved: each one stayed
+as a block, and the order between them, decided by the disambiguator
+(PAP3.3.1, `DESIGN.md` DES3.2), was the same on all nodes.
+
+### MAN13: an invalid index between computers
+
+**Goal:** an index out of range is refused on a networked node too
+(REQ4).
+
+**Steps**
+
+1. On any node: `Crdt.insert(999, "x")` (beyond the length).
+2. On every node: `Crdt.text()`.
+
+**Result (real run):** it returned `{:error, :invalid_index}`.
+
+## A Pi 4 with Nerves (MAN14 and MAN15)
+
+The Pi runs the firmware of `firmware/` (`DESIGN.md` DES15), burned
+from the ready image or an own build
+([README-nerves.md](../deploy/README-nerves.md)). It needs no start
+script: it names itself `<Nerves hostname>@<IPv4 of wlan0>`, for
+example `nerves-35f1@<hotspot IP>`. Run in November 2026 with a
+Raspberry Pi 4, an iPhone hotspot ("Maximize Compatibility" on) and
+laptop-b (macOS, Elixir 1.20.5 with OTP 29), with no node table.
+
+### MAN14: a Pi with Nerves and a Mac
+
+**Goal:** a Pi 4 with Nerves and a computer find each other with no
+node table; MAN1, MAN4 and MAN5 between them (REQ21, REQ5, REQ6,
+REQ12, REQ13, REQ14, CON3).
+
+**Steps**
+
+1. Burn the card and power the Pi on. From the Mac, on the same
+   network: `ssh nerves-XXXX.local` (the first boot takes a few
+   minutes; [README-nerves.md](../deploy/README-nerves.md), "First boot
+   without a monitor").
+2. On the Pi: `Crdt.status()`. It shows the node name, the history file
+   `/data/crdt/nerves-XXXX.jsonl`, `table: []` and discovery listening.
+3. On laptop-b: `./scripts/start.sh --name laptop-b`. It prints
+   `connected nerves-XXXX@<IP>: resending history (0 ops)`.
+4. MAN1: `Crdt.insert(0, "hola ")` on the Mac, then
+   `Crdt.insert(5, "desde nerves")` on the Pi. On both: `Crdt.text()`.
+5. MAN4: on the Pi, `Nerves.Runtime.poweroff()`, then unplug it. On the
+   Mac: `Crdt.insert(0, "x")`. Power the Pi on again and wait.
+6. MAN5: on the Mac, `System.halt()`. Power-cycle the Pi alone; over
+   SSH, `Crdt.text()`, then `Crdt.insert(0, "y")`. Start the Mac again.
+
+**Result (real run):**
+
+- Step 3: the Mac connected at once, by discovery.
+- Step 4: both returned `"hola desde nerves"`. Right after the insert
+  the Mac printed `duplicate dropped: op 1..5 from laptop-b`: the Pi
+  forwards each op it receives (REQ11), so with two nodes each op comes
+  back to its origin, which drops it. It is not an error.
+- Step 5: the Mac printed `disconnected`, but when the Pi is powered
+  off abruptly it can take about a minute. When the Pi came back, the
+  Mac printed `connected nerves-XXXX@<IP>: resending history (18 ops)`
+  and both returned `"xhola desde nerves"`.
+- Step 6: the Pi showed `"xhola desde nerves"` from `/data`. The Mac
+  printed `history loaded: 18 ops`, then
+  `applied op 13 from nerves-XXXX@<IP>: ins "y"`: the new op arrived as
+  "applied", not as "duplicate dropped". Both returned
+  `"yxhola desde nerves"`.
+- The startup guard did not reboot the Pi (uptime over 20 minutes).
+
+### MAN15: the Pi with Nerves on a new network
+
+**Goal:** the Pi joins another Wi-Fi with its new name and keeps its
+text (REQ21, REQ13).
+
+**Steps**
+
+1. With an HDMI screen and a USB keyboard on the Pi, in its console:
+   `VintageNetWiFi.quick_configure("<SSID>", "<password>")` for another
+   Wi-Fi (for example a home Wi-Fi).
+2. Restart the Pi (a new IP needs a restart). Start a computer's node
+   on that network.
+3. On both: `Crdt.status()` and `Crdt.text()`.
+4. Back to the networks of the build: `VintageNet.reset_to_defaults("wlan0")`
+   and restart.
+
+**Result:** pending. Not run yet.

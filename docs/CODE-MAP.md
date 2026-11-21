@@ -304,6 +304,19 @@ this project that each function calls.
 - `size/1` (private): the number of visible characters. Calls
   `Crdt.Treedoc.debug_rows/1`. DES7.
 
+### On Nerves: `CrdtFw` (`firmware/lib/crdt_fw.ex`)
+
+Not in `lib/` and not a study step: on a Pi 4 with Nerves it starts the
+node that `Crdt.Application` starts elsewhere (`DESIGN.md` DES15).
+
+- `handle_continue/2`: after `init/1`, waits for the IPv4 of `wlan0`
+  (`handle_info/2` hears it from `VintageNet`).
+- `start_node/1`: the steps in order: distribution ports, `epmd`,
+  `Node.start/1`, `Node.set_cookie/1`, `/data/crdt`, a wait for an old
+  replica still stopping, then `Crdt.Replica` and `Crdt.Discovery`
+  under `CrdtFw.NodeSupervisor`. A step that fails is printed on the
+  HDMI console.
+
 ## 3. Sequence diagrams
 
 ### Replica start

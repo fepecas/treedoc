@@ -51,6 +51,7 @@ All codes have three letters, abbreviations in English.
 | REQ18 | The history on disk must be readable with a text editor: one operation per line. | OUR | Each line of the file is a readable JSON object, and the round-trip conversion loses no information. | Format tests, MAN7 |
 | REQ19 | A history line is complete if it ends in `"\n"` and is valid JSON. If the last line is not complete, the node must report it, remove it from the file and go on starting. If an earlier line is damaged, the replica must not start and must explain what to do, but the virtual machine and IEx must stay alive; meanwhile, the `Crdt` functions return `{:error, :no_replica}`. | OUR | A history whose last line is cut in half loads all the others; then a new operation is written and the history loads again with no errors. With a damaged line in the middle, `Crdt.Replica.start_link/1` returns `:ignore` and the console says which file to delete. | History loading tests |
 | REQ20 | Inserting or deleting several characters at once must behave as a single local edit: the inserted text stays together even if remote edits arrive at the same time. | OUR | `Crdt.insert(i, "mundo")` leaves "mundo" together on every node, also during MAN2. | Replica test, MAN2 |
+| REQ21 | The node must also run on a Raspberry Pi 4 with Nerves firmware, with no start script: when `wlan0` has an IPv4, it names itself `<hostname>@<IPv4>`, connects like any other node (discovery and the optional node list) and keeps its history on the writable partition. A change of IP is handled by restarting the Pi, as on the other platforms (REQ13). | ASG (Raspberry Pi), OUR (Nerves) | The Pi with Nerves and a computer started with its start script, with no node list, find each other and pass MAN1, MAN4 and MAN5 between them. Restarted on a new network, the Pi joins with its new name and the same text. | MAN14, MAN15 |
 
 ---
 
@@ -58,12 +59,13 @@ All codes have three letters, abbreviations in English.
 
 | ID | Constraint | Origin |
 |---|---|---|
-| CON1 | The code must compile and run with Elixir 1.18.3 and Erlang/OTP 27, the versions of Raspberry Pi OS (Debian trixie), even if it is developed with newer versions. Nothing from Elixir 1.19 or later or from OTP 28 or later is used. No external dependencies. | OUR |
+| CON1 | The code of `lib/` must compile and run with Elixir 1.18.3 and Erlang/OTP 27, the versions of Raspberry Pi OS (Debian trixie), even if it is developed with newer versions. Nothing from Elixir 1.19 or later or from OTP 28 or later is used in `lib/`. `lib/` and the root `mix.exs` have no external dependencies. Only the firmware project `firmware/` depends on Nerves; it is built with the Erlang/OTP of `nerves_system_rpi4` and an Elixir version that supports it. | OUR |
 | CON2 | All nodes are written in Elixir and communicate with Erlang distribution. | OUR |
-| CON3 | It must run on Windows and on macOS (several nodes on one computer) and on Raspberry Pi OS. Each of them starts a node with one start script that picks the Wi-Fi IPv4 by itself. | ASG (Raspberry Pi), OUR (Windows, macOS, start scripts) |
+| CON3 | It must run on Windows and on macOS (several nodes on one computer), on Raspberry Pi OS and on a Raspberry Pi 4 with Nerves. On Windows, macOS and Raspberry Pi OS each starts a node with one start script that picks the Wi-Fi IPv4 by itself; on Nerves the firmware does the same when the Pi boots. | ASG (Raspberry Pi), OUR (Windows, macOS, start scripts, Nerves) |
 | CON4 | The CRDT is Treedoc, operation-based, with a granularity of one character. | ASG (a CRDT), OUR (Treedoc, operation-based; one-character granularity, allowed by PAP2) |
 | CON5 | The code must be simple and understandable by students. | OUR |
 | CON6 | The interface is functions in IEx. | OUR |
+| CON7 | No real SSID, Wi-Fi password or SSH key is written in the repository or its public copy. One exception: the SSID and password of the test hotspot are published in `deploy/README-nerves.md`, because the ready Nerves image only joins that network. | OUR |
 
 ---
 
@@ -74,8 +76,11 @@ All codes have three letters, abbreviations in English.
 - A graphical interface or a full-screen editor.
 - Discovery beyond the local network (multicast does not cross routers); a node on another network is added with the list.
 - Security beyond the Erlang cookie.
-- Editing together with another team's implementation, in Elixir or in another language (level C of `INTEGRATION.md`); levels A (connect) and B (receive and send our operations, also from Erlang) are documented in `INTEGRATION.md`.
+- Editing together with another team's own implementation, in Elixir or in another language (`INTEGRATION.md`, L3, "A full implementation"); joining the cluster (L1), compatible discovery (L2) and our operation protocol (L3) are documented in `INTEGRATION.md`.
 - Several documents, undo and redo.
+- Nerves on other boards than the Raspberry Pi 4, and our own Nerves systems: the firmware uses the official `nerves_system_rpi4`.
+- On Nerves, joining a new network without restarting: the node name is fixed at boot, and a new IP needs a restart, as on the other platforms (REQ13).
+- On Nerves, the replica's notices in an SSH session: they appear on the Pi's console (HDMI screen); the queries (`Crdt.status()` and the others) do work over SSH.
 
 ---
 
@@ -90,6 +95,13 @@ The exact commands are in `README.md` and, case by case, in `MANUAL-TESTS.md`. L
 | MAN3 | Delete on one node and check that the delete appears on the others. | REQ3, REQ6 |
 | MAN4 | Halt a node with `System.halt()` and keep writing on the others. Then start it again, with no node table: it connects by itself and catches up. | REQ1, REQ11, REQ12, REQ14 |
 | MAN5 | Halt the three nodes. Start only one: it recovers its text. Write on it right away. Start the others: they receive those operations and none is dropped as a duplicate. | REQ13 |
-| MAN6 | Repeat MAN1 to MAN5 between two Raspberry Pis, each started with `scripts/start.sh` and no node table. MAN2 with two nodes. MAN4: halt one Pi, write on the other, start it again and see that it catches up. Optional: a third node, a computer on the same network started with its start script (as in `NETWORK.md`). REQ1 does not change: it is tested locally with three nodes (MAN4). Raspberry Pi guide not included yet. | CON3 |
+| MAN6 | Repeat MAN1 to MAN5 between two Raspberry Pis, each started with `scripts/start.sh` and no node table. MAN2 with two nodes. MAN4: halt one Pi, write on the other, start it again and see that it catches up. Optional: a third node, a computer on the same network started with its start script (as in `NETWORK.md`). REQ1 does not change: it is tested locally with three nodes (MAN4). | CON3 |
 | MAN7 | Check `Crdt.status()`, `Crdt.history()`, `Crdt.debug()`, the console notices and the `data/*.jsonl` file. | REQ17, REQ18 |
 | MAN8 | On two nodes at the same time, run `for _ <- 1..100, do: Crdt.insert(0, "a")`. At the end, the text grew by 200 characters on each node, the three texts are equal and there were no errors. | REQ7, REQ16 |
+| MAN9 | Two computers on the same Wi-Fi (for example Windows and macOS), each started with its start script and no node table, find each other by discovery; an edit on each appears on the other. | REQ5, REQ6, REQ14, CON3 |
+| MAN10 | Between two computers: halt the node of one, edit on the other, start it again: it reconnects by itself, both resend their whole history, the copies are dropped and the texts are equal. | REQ10, REQ12 |
+| MAN11 | A computer and a Raspberry Pi on a phone hotspot: the Pi edits alone, then the computer starts and catches up; a third computer joins later and gets everything. The same text on three machines and three operating systems. | REQ7, REQ12, CON3 |
+| MAN12 | Between computers, two nodes insert a word at the same position at the same time: each word stays in one block and the order is the same on every node. | REQ8, REQ20 |
+| MAN13 | Between computers, `Crdt.insert` with an index out of range returns `{:error, :invalid_index}` and changes nothing. | REQ4 |
+| MAN14 | A Raspberry Pi 4 with Nerves and a Mac (started with `scripts/start.sh`), on the same network and with no node list, find each other. MAN1 between them. MAN4: power off the Pi, edit on the Mac, power the Pi on: it catches up. MAN5: halt both, start only the Pi: it recovers its text from `/data`; write N+1… on it at once, start the Mac: those new operations arrive on the Mac as "applied", not as "duplicate dropped" (as in Case 13 of `MANUAL-TESTS.md`); the duplicates of the resent history are normal. It also checks the assumptions of `DESIGN.md` DES15. | REQ21, REQ5, REQ6, REQ12, REQ13, REQ14, CON3 |
+| MAN15 | Move the Pi with Nerves to a new network: from the HDMI console with a USB keyboard, `VintageNetWiFi.quick_configure/2` to another Wi-Fi (for example a home Wi-Fi), then restart the Pi (a new IP needs a restart, REQ13). It joins with its new name and its text is the same. Then `VintageNet.reset_to_defaults("wlan0")` and a restart go back to the networks of the build. | REQ21, REQ13 |

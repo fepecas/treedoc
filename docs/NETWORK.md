@@ -1,9 +1,9 @@
 # Several computers on the same network
 
-**Not yet validated between computers.** On one Windows computer the
-start scripts, discovery and three nodes were run for real; multicast
-was checked between a Windows computer and a Raspberry Pi on a phone
-hotspot. A run between real computers may need fixes.
+**Validated between computers** (November 2026): Windows and macOS on
+a home Wi-Fi, and Windows, a Raspberry Pi and macOS on a phone hotspot,
+all by discovery with no node table. Results:
+[MANUAL-TESTS.md, MAN9 to MAN13](MANUAL-TESTS.md#between-computers-tests-run-man9-to-man13).
 
 One node per computer (Windows, macOS or a Raspberry Pi), on the same
 Wi-Fi. Each node finds the others by itself: no node table to edit.
@@ -18,6 +18,10 @@ Node names are `<hostname>@<IPv4>`, for example `pi-pe@172.20.10.4`
 - [6. More](#6-more)
 
 ## 1. Get the code
+
+You need Elixir 1.18 or later with Erlang/OTP 27 or later (tested:
+Elixir 1.18.3 with OTP 27 on Raspberry Pi OS, Elixir 1.20 with OTP 29
+on Windows and macOS). All the computers on the same Wi-Fi or hotspot.
 
 On each computer, in a terminal:
 
@@ -36,8 +40,11 @@ set-hostname crdt-pi2` and a reboot).
 ## 2. Once per computer: firewall
 
 **Windows.** In a PowerShell run as administrator. First, the network
-must be private (Settings > Network & internet > Wi-Fi > the network >
-Network profile type: Private), or:
+must be Private (Settings > Network & internet > Wi-Fi > the network >
+Network profile type: Private). Windows keeps this per network: do it
+once for each new Wi-Fi or hotspot. While the profile is Public, the
+nodes do not connect; after switching to Private they connect by
+themselves, with no restart. Or:
 
 ```powershell
 Get-NetConnectionProfile
@@ -68,7 +75,9 @@ networks.
 
 **macOS.** If the firewall is on (System Settings > Network >
 Firewall), the first start asks whether `beam.smp` may accept incoming
-connections: Allow.
+connections: Allow. If the Mac does not list a phone hotspot in the
+Wi-Fi menu, choose "Other network" (Other Networks > Other...) and type
+its name and password.
 
 **Raspberry Pi OS.** No firewall by default: nothing to do.
 
@@ -86,6 +95,10 @@ macOS and Linux (also the Pi):
 ./scripts/start.sh
 ```
 
+Type the path as shown: `./scripts/start.sh` with `./` on macOS and
+Linux, `.\scripts\start.ps1` with `.\` on Windows; a bare `start.sh` is
+not found.
+
 The script prints the node name, the IP and the interface it picked,
 for example:
 
@@ -102,8 +115,17 @@ If it cannot decide, it lists what it found and stops. Then give the IP
 yourself: `.\scripts\start.ps1 -Ip 172.20.10.3` or
 `./scripts/start.sh --ip 172.20.10.4`. To see the IPv4: `ipconfig` on
 Windows (line "IPv4 Address" of the Wi-Fi adapter),
-`ipconfig getifaddr en0` on macOS, `hostname -I` on Linux. The
-variable `CRDT_IP` does the same.
+`ipconfig getifaddr en0` on macOS, `hostname -I` on Linux and the Pi
+(the first address). The variable `CRDT_IP` does the same.
+
+The node name travels to every other node and is stored in every op
+and history file. On a computer whose hostname you do not want to
+share (for example a work computer), give a neutral name:
+`.\scripts\start.ps1 -Name win-a` or `./scripts/start.sh --name laptop-b`.
+
+A Raspberry Pi 4 with Nerves has no start script: it starts its node
+when it boots, and has no firewall to open
+([README-nerves.md](../deploy/README-nerves.md)).
 
 ## 4. Check
 
@@ -119,7 +141,7 @@ Crdt.status()
 
 ```text
 discovery: listening on 45892
-connected: crdt-pi1@172.20.10.4 (announced), co-mac@172.20.10.5 (announced)
+connected: crdt-pi1@172.20.10.4 (announced), laptop-b@172.20.10.5 (announced)
 ```
 
 `(announced)`: this node heard its announcement. `(other)`: another

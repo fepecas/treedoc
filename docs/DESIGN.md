@@ -82,6 +82,17 @@ References:
 | MAN6 with two Pis: MAN2 with two nodes; MAN4 is halting one Pi, writing on the other, starting it again and seeing that it catches up; a third node (a computer with `crdt@IP`) is optional. REQ1 is tested locally with three nodes | OUR (there are two Pis, DES13) |
 | `deploy/crdt.service` (not included yet) runs the node without IEx as the user created in Raspberry Pi Imager, in the project folder, with the name and IP of `scripts/start.sh`, after the network and with `Restart=on-failure`; `mix compile` is done before, by hand | OUR (the service has no terminal and does not compile, DES13) |
 | A node of another team receives and sends our operations once it is connected to ours (by its table, ours or discovery); it receives `{:remote, msg}` and `{:hello, node}` casts on a process registered as `Crdt.Replica` | OUR (the replica sends to every connected node, DES6; the messages of DES5.1) |
+| A Raspberry Pi 4 can run the node with Nerves firmware: a separate project `firmware/` (poncho) that depends on `:crdt` with `path: ".."` and `runtime: false`; in its release `:crdt` is only loaded, so `Crdt.Application` does not run | ASG (Raspberry Pi), OUR (Nerves; `lib/` does not change, DES15) |
+| On Nerves, `CrdtFw` starts the node at run time: wait for the IPv4 of `wlan0`, fix the distribution ports, start `epmd`, `Node.start/1`, `Node.set_cookie/1`, create `/data/crdt`, then `Crdt.Replica` and `Crdt.Discovery` under its own `one_for_one` supervisor, `CrdtFw.NodeSupervisor`; the steps run after `init/1`, and a restarted `CrdtFw` repeats them safely | OUR (Nerves does not start Erlang distribution; the root file system is read-only and `/data` is writable, DES15) |
+| On Nerves, the distribution ports 4218 to 4228 are set with `Application.put_env(:kernel, ...)` before `Node.start/1`, not in `vm.args.eex` | OUR (OTP reads them when the listen socket opens; the same firewall rules as DES6, DES15) |
+| On Nerves, the node name is `<Nerves hostname>@<IPv4 of wlan0>`, with the default hostname `nerves-XXXX` | OUR (the default hostname is different on each device, as DES6 asks; DES15) |
+| On Nerves, Wi-Fi is a list of `vintage_net_wifi` networks, with each SSID and password read from environment variables at build time, never in Git: the hotspot with the higher priority, the lab network optional | OUR (DES15) |
+| On Nerves, the SSH keys (the user's and the partner's) are read at build time from a file outside Git, given by an environment variable | OUR (DES15) |
+| On Nerves, the firmware application is `:temporary`: if it stops, the virtual machine stays alive and the Pi does not reboot, except a crash loop at boot, which the startup guard turns into a reboot after 15 minutes | OUR (same as DES13 with systemd; the startup guard validates a new firmware, DES15) |
+| On Nerves, the replica's notices go to the Pi's console (HDMI screen); DES9 does not change | OUR (DES15) |
+| On Nerves, another Wi-Fi network can be added at run time from the IEx console with `VintageNetWiFi.quick_configure/2`, kept across restarts | OUR (the Pi also works outside the hotspot and the lab, DES15) |
+| On Nerves, the node table is a `:nodes` list in the firmware configuration, empty by default | OUR (discovery first, as DES6; DES15) |
+| On Nerves, a change of IP is handled by restarting the Pi | OUR (as on the other platforms; the history file does not depend on the IP, REQ13, DES4.5, DES14) |
 ---
 
 ## 3. Treedoc
@@ -305,7 +316,7 @@ There is also a control message, with no operation: `GenServer.cast({Crdt.Replic
 
 *Covers: REQ1, REQ12, REQ14, REQ15, CON2, CON3.*
 
-- **Erlang distribution.** Each node starts with `--name` and `--cookie`. The cookie is a shared key: only nodes with the same cookie connect. The cookie is `cpd2026`, agreed with the other teams so we can test with each other. With a shared cookie, nodes of other teams can connect to ours and then receive our operations, like any connected node (DES14). (OUR.)
+- **Erlang distribution.** Each node starts with `--name` and `--cookie`. On Nerves the firmware gives them at run time (DES15). The cookie is a shared key: only nodes with the same cookie connect. The cookie is `cpd2026`, agreed with the other teams so we can test with each other. With a shared cookie, nodes of other teams can connect to ours and then receive our operations, like any connected node (DES14). (OUR.)
 - **Node names:** `<hostname>@<IPv4>`, always with the IPv4, never `.local`. (OUR.)
   - The start scripts (DES11) build it: the machine's hostname, lowercased, with every character that is not `a-z`, `0-9`, `_` or `-` changed to `_`; for example `pi-pe@172.20.10.4`.
   - Several nodes on one machine get a suffix: `pi-pe-1@IP`, `pi-pe-2@IP`. Locally the tests use the names `crdt1@127.0.0.1`, `crdt2@127.0.0.1` and `crdt3@127.0.0.1`, given to the script.
@@ -360,7 +371,7 @@ There is also a control message, with no operation: `GenServer.cast({Crdt.Replic
 
 *Covers: CON1, CON5.*
 
-No external dependencies: only Elixir 1.18 or later and OTP. Each module is small and has a single responsibility, so the code can be understood and explained in class.
+`lib/` has no external dependencies: only Elixir 1.18 or later and OTP (CON1). `firmware/` depends on Nerves (DES15). Each module is small and has a single responsibility, so the code can be understood and explained in class.
 
 | Module | Responsibility | Has effects (network, file) | Budget (lines) |
 |---|---|---|---|
@@ -372,8 +383,10 @@ No external dependencies: only Elixir 1.18 or later and OTP. Each module is smal
 | `Crdt.Config` | Read the optional node table | Reads a file | 20 |
 | `Crdt.Discovery` | Announce the node and connect to the nodes heard on the local network (DES6.1) | Yes (UDP) | 60 |
 | `Crdt.Replica` | GenServer: joins everything, handles network, file and console | Yes | 250 |
+| `CrdtFw` (in `firmware/`, only on Nerves, DES15) | Starts the node on Nerves: waits for the IPv4, starts the distribution, then the replica and discovery under its own supervisor | Yes | 80 (not counted with `lib/`) |
+| `CrdtFw.Application` (in `firmware/`, only on Nerves, DES15) | Starts `CrdtFw.Supervisor` with `CrdtFw` | No | 15 (not counted with `lib/`) |
 
-The budget counts physical lines that are not empty, are not comments and do not belong to `@moduledoc` or `@doc`. It is a reference cap, not a goal.
+The budget counts physical lines that are not empty, are not comments and do not belong to `@moduledoc` or `@doc`. It is a reference cap, not a goal. `CrdtFw` and `CrdtFw.Application` are not in `lib/`: they are outside the budget of `lib/` and have their own (DES15). `CrdtFw` has 80: DES15 has seven steps, and each one that can fail gives its own message instead of a crash (DES6), in one process with one job (CON5).
 
 `Crdt.Treedoc`, `Crdt.Causal` and `Crdt.LogFormat` are pure functions: they are tested with tests without network.
 
@@ -455,7 +468,8 @@ scripts/start.ps1                       (start script, Windows, DES11)
 scripts/start.sh                        (start script, macOS and Linux, DES11)
 scripts/multicast_check.exs             (checks whether multicast works on a network, DES6.1)
 data/            (only data/.gitkeep goes to Git)
-deploy/README-pi.md                     (guide for the Raspberry Pis; not included yet)
+deploy/README-pi.md                     (guide for the Raspberry Pis with Raspberry Pi OS)
+deploy/README-nerves.md                 (guide for a Pi 4 with Nerves: ready image or own build, DES15)
 deploy/crdt.service                     (systemd service, DES13; not included yet)
 README.md
 LICENSE                                 (MIT)
@@ -465,7 +479,16 @@ docs/TESTS.md                           (guide to the automated tests)
 docs/MANUAL-TESTS.md                    (manual test guide with three terminals)
 docs/NETWORK.md                         (several computers on the same network)
 docs/CODE-MAP.md                        (guide to study the code)
-docs/INTEGRATION.md                     (contract for another team: connect, and receive and send our operations)
+docs/INTEGRATION.md                     (contract for another team: join the cluster, discovery, our operation protocol)
+firmware/mix.exs                        (Nerves firmware project, target rpi4; depends on :crdt with path: ".." and runtime: false, DES15)
+firmware/mix.lock                       (versions of Nerves and its dependencies, written by the first build)
+firmware/.formatter.exs                 (mix format in firmware/; plain inputs, no import_deps)
+firmware/config/config.exs              (common configuration; imports host.exs or target.exs)
+firmware/config/host.exs                (configuration on the computer)
+firmware/config/target.exs              (Wi-Fi, SSH keys and node table, read from environment variables at build time)
+firmware/rel/vm.args.eex                (VM flags; no distribution lines, DES15)
+firmware/lib/crdt_fw/application.ex     (the firmware application, :temporary, and CrdtFw.Supervisor)
+firmware/lib/crdt_fw.ex                 (CrdtFw: start order of DES15 and CrdtFw.NodeSupervisor)
 ```
 
 ---
@@ -474,7 +497,7 @@ docs/INTEGRATION.md                     (contract for another team: connect, and
 
 *Covers: CON3.*
 
-- One start command per machine: `scripts/start.ps1` on Windows (PowerShell) and `scripts/start.sh` on macOS and Linux (also the Pi). (OUR.)
+- One start command per machine: `scripts/start.ps1` on Windows (PowerShell) and `scripts/start.sh` on macOS and Linux (also the Pi). (OUR.) A Pi with Nerves has no start script: the firmware does the same steps (DES15).
 - What the script does, in order:
   1. Name: the hostname, made safe (DES6), unless a name is given (`-Name` / `--name`, or `CRDT_NAME`). With `-Node N` / `--node N` it adds the suffix `-N`.
   2. IP: the IPv4 of the Wi-Fi, by the rule below, unless an IP is given (`-Ip` / `--ip`, or `CRDT_IP`).
@@ -490,7 +513,7 @@ docs/INTEGRATION.md                     (contract for another team: connect, and
 - First, once and in a single terminal: `mix compile`. That way the three nodes do not try to compile at the same time in the same folder.
 - The commands, for PowerShell and for macOS and Linux, are in [README.md, "Quick start"](../README.md#quick-start).
 - To start from scratch: halt every node and delete the `.jsonl` files of `data/` on all of them (`data/.gitkeep` stays). Deleting the history of a single node has its own rules (DES14).
-- The manual tests MAN1 to MAN8 are defined in `REQUIREMENTS.md`; their steps are in `MANUAL-TESTS.md` (MAN1: Case 2; MAN2: Cases 5 and 6; MAN3: Case 4; MAN4: Cases 11 and 12; MAN5: Case 13; MAN7: Case 9; MAN8: Case 10).
+- The manual tests MAN1 to MAN8 are defined in `REQUIREMENTS.md`; their steps are in `MANUAL-TESTS.md` (MAN1: Case 2; MAN2: Cases 5 and 6; MAN3: Case 4; MAN4: Cases 11 and 12; MAN5: Case 13; MAN7: Case 9; MAN8: Case 10). MAN9 to MAN13, between computers, are in its section "Between computers: tests run".
 
 ---
 
@@ -512,6 +535,7 @@ The `mix test --cover` threshold is 0 (`test_coverage` in `mix.exs`) because the
 - `Crdt.Replica` without network: an invalid index does not change the clock, and `insert` of several characters leaves the text together.
 - With real nodes: `test/crdt_distributed_test.exs` starts nodes with `:peer` (OTP 25 or later) on the same computer. It carries `@tag :distributed`, is excluded by default (`test/test_helper.exs`) and runs with `mix test --include distributed`. It checks the forwarding of what leaves the buffer, that a connected node outside any table receives the operations, the history on `:nodeup` and `hello` from any node, that an unreachable node in the table does not block `Crdt.insert`, that the history loaded from the file is sent only once to a node already connected, discovery (two nodes with no table find each other; an announcement connects, its own announcement and a packet without the tag do not; a busy port gives announce only), and the file order (DES4.5): in a local call, a single `:file.sync/1` and then the sends; in a remote operation, sync, "applied" notice and forwarding. (OUR.)
 - `Crdt` without a running replica returns `{:error, :no_replica}`.
+- `firmware/` and `CrdtFw` are not part of `mix test`: they need the Nerves target. `MIX_TARGET=rpi4 mix firmware` must build with no warnings, and `CrdtFw` is tested by hand on the Pi (MAN14, MAN15). `lib/` does not change for Nerves, so its tests cover it. (OUR.)
 - `Crdt.status()` includes the waiting operations with what they are missing; `Crdt.history()` shows the last 10 (with `... N earlier ops` if there are more) and `Crdt.history(:all)` all of them, in order.
 - Loading a history: with the last line cut in half, the others are loaded; then a new operation is written and the history loads again with no errors. With a damaged line in the middle, `start_link/1` returns `:ignore`.
 
@@ -524,7 +548,7 @@ The `mix test --cover` threshold is 0 (`test_coverage` in `mix.exs`) because the
 - Raspberry Pi OS (64-bit), Lite or with desktop, flashed with Raspberry Pi Imager. The hostname, different on each Pi (for example `crdt-pi1`, `crdt-pi2`; never two left as `raspberrypi`, DES6), the user, SSH and the Wi-Fi of the test network (below) are set there too. (OUR.)
 - Install Elixir: `sudo apt install elixir`. On current Raspberry Pi OS (Debian trixie) it installs Elixir 1.18.3 with Erlang/OTP 27. That is why `mix.exs` declares `elixir: "~> 1.18"` and the code uses nothing from Elixir 1.19 or later or from OTP 28 or later, even if it is developed on Windows with newer versions. When in doubt, the simplest alternative is used.
 - On the Pi, after getting the code: `mix compile` and `mix test`. What was compiled on Windows does not work on the Pi (another OTP version), so `_build/` is not copied.
-- `deploy/README-pi.md` (not included yet) has the steps for the Pis, written without hardware and checked with the Pis.
+- `deploy/README-pi.md` has the steps for the Pis, written without hardware and checked with the Pis.
 - The node starts with `scripts/start.sh` (DES11): name `<hostname>@<Wi-Fi IPv4>`, discovery on, no node table. If multicast is blocked on the test network, a table with `NODES_FILE` (DES6).
 - MAN6 is done with two Pis (`REQUIREMENTS.md`): MAN2 with two nodes, and MAN4 is halting one Pi, writing on the other, starting it again and seeing that it catches up. A third node is optional: a computer on the same network started with its start script, as in `NETWORK.md`. REQ1 is tested locally with three nodes. The steps of MAN6 go in `deploy/README-pi.md` (not included yet). (OUR.)
 - Before MAN6, the connection test, without our code (agreed with the other teams): ping, `Node.connect/1` and `Node.list()`. The steps, and the other network steps, are in [NETWORK.md](NETWORK.md).
@@ -541,12 +565,13 @@ The `mix test --cover` threshold is 0 (`test_coverage` in `mix.exs`) because the
   - The installation and usage steps go in `deploy/README-pi.md` (not included yet), section "Run as a service".
 - Console on a node that runs as a service, on the Pi itself: `iex --name console@127.0.0.1 --cookie cpd2026 --hidden --remsh <node name>`, with the node name printed by the script. With `--hidden`, the console is not in `Node.list()` and receives no operations (DES6).
 - For the demo, the node of each Pi runs in the foreground in an SSH session (`./scripts/start.sh`), as on Windows: the commands and the replica's notices are visible there (DES9). Before that the service must be stopped (`sudo systemctl stop crdt`), only if it is installed, because two nodes cannot have the same name. (OUR.)
+- Instead of Raspberry Pi OS, a Raspberry Pi 4 can run the node with Nerves firmware (DES15). There is no service, no start script and no `mix compile` on the Pi: the firmware starts the node when the Pi boots.
 
 ---
 
 ## 14. Known limitations
 
-- **PosIDs grow when typing in a row:** each new character is a child of the previous one, so its path is one step longer. The same happens with Algorithm 1 of the paper, as PAP4.1 says. For the demo, short texts are enough (fewer than about 300 characters). Balancing, which the same section proposes, is out of scope.
+- **PosIDs grow when typing in a row:** each new character is a child of the previous one, so its path is one step longer. The same happens with Algorithm 1 of the paper, as PAP4.1 says. Every step also repeats the full node name, so the history grows about quadratically when typing in a row (observed between computers: 14 characters gave a history of about 6 KB). For the demo, short texts are enough (fewer than about 300 characters). Balancing, which the same section proposes, is out of scope.
 - **`prepare` sorts the whole document on each edit.** With texts of a few hundred characters it is not noticeable; it does not need optimizing.
 - **The history grows without limit and is resent whole** on each connection. With short texts it does not matter. The future improvement would be to send each node only what it is missing, using its vector clock.
 - **Catching up costs one sync per operation.** When receiving a large history, each new remote operation does its own `:file.sync/1`. On the Pi that can take seconds, and meanwhile a local call may have to wait.
@@ -556,13 +581,64 @@ The `mix test --cover` threshold is 0 (`test_coverage` in `mix.exs`) because the
 - **One discovery listener per machine.** If the node that listens on a machine halts, the other nodes of that machine only announce until one of them restarts. They stay connected to each other, and the listeners of other machines still hear them (DES6.1).
 - **Any connected node receives our operations.** Membership is `Node.list()`: a node of another team with the same cookie, or a remote console started without `--hidden`, receives every cast. Without a process `Crdt.Replica` the cast is dropped; a foreign `Crdt.Replica` that sends another format makes ours crash and restart from its file (INTEGRATION.md).
 - **Names from announcements become atoms.** A packet with our tag creates an atom with the name it carries. On our own network that is not a problem.
-- **The clock grows with each new IP.** Each name `<hostname>@<IP>` that a machine used keeps its entry in the clock and in the PosIDs (DES4.5). For a demo it does not matter.
+- **Reconnection may be slow.** Once, on a home Wi-Fi, a restarted node reconnected after about 30 s (observed, not measured); on a phone hotspot it was immediate.
+- **Node names are public inside the cluster.** The node name is announced to every node and stored in every op and history file. On a corporate computer, start with a neutral name (`-Name` / `--name`, DES11).
+- **The clock grows with each new IP.** Each name `<hostname>@<IP>` that a machine used keeps its entry in the clock and in the PosIDs (DES4.5), so one machine used on two networks shows as two authors. It does not affect convergence; for a demo it does not matter.
+- **On Nerves, a new IP needs a restart.** The node name is fixed when the firmware starts the node (DES15). If the Pi gets another IP, it is restarted: the history file does not depend on the IP (REQ13), and the clock grows with the new name (above).
+- **On Nerves, burning the SD card again deletes `/data`.** A firmware update over the network keeps `/data`; burning the card again clears it, which is the same as deleting the history of that node (below).
+- **On Nerves, a crash loop at boot reboots the Pi.** If `crdt_fw` is not running when the startup guard checks at boot, the guard reboots the Pi after 15 minutes (DES15). Without the loop, a stopped `crdt_fw` leaves the Pi on, as with systemd (DES13).
+- **On Nerves, the notices are not seen over SSH.** The replica's notices go to the Pi's console (HDMI screen); an SSH session shows only what its commands print (`Crdt.status()`, `Crdt.history()`, `Crdt.debug()`, DES9).
 - **A combining accent inserted alone takes its own position.** It joins the previous character into one grapheme (for example `"e"` and then `"́"` look like `"é"`), but it still takes its own position: indices count stored positions, not graphemes of the visible text. It does not happen when typing normally, because the keyboard produces precomposed characters such as `"é"`.
 - **Deleting the history of a single node.** If `data/<node>.jsonl` of a single node is deleted (for example, because it was damaged, DES4.5), the node starts with its clock at 0 and the others resend everything to it. If someone edits on that node before it catches up, its new operations repeat sequence numbers, the others drop them as duplicates and the texts diverge. Rule: do not edit on that node until its text is the same as the others'.
 - **Repeated notices on reconnection.** With each `:nodeup` and each `hello`, every node resends its whole history by broadcast (REQ15, DES4.4), and each repeated copy prints "duplicate dropped" (and an operation that is already waiting prints "waiting" again). With 3 nodes and 200 characters (MAN8), one reconnection can print hundreds of lines. It is not an error.
 
 ---
 
-## 15. Open questions
+## 15. Raspberry Pi with Nerves
+
+*Covers: REQ21, CON1, CON3, REQ13, REQ14.*
+
+A Raspberry Pi 4 can run the node with Nerves firmware instead of Raspberry Pi OS: firmware written to the SD card, with no shell and no start script. `lib/` does not change. (ASG for the Raspberry Pi, OUR for Nerves.)
+
+- **Target and versions.** `MIX_TARGET=rpi4`, with the official system `nerves_system_rpi4` 2.2 (Erlang/OTP 29.1.2). The computer that builds the firmware has the same Erlang/OTP and an Elixir that supports it (1.20, `-otp-29`). `lib/` keeps CON1: it still compiles with Elixir 1.18.3 and OTP 27 on Raspberry Pi OS. (OUR.)
+- **Project.** `firmware/` is a separate Mix project next to `lib/` (a "poncho" project) that depends on `{:crdt, path: "..", runtime: false}` and on Nerves. Only `firmware/` has external dependencies (CON1). (OUR.)
+- **Release.** In the release of `firmware/`, `applications: [crdt: :load, crdt_fw: :temporary]`. `:crdt` is only loaded (`:load`): its modules are there but `Crdt.Application` does not run, because on Nerves the node has no name when the applications start (DES6). The firmware application `crdt_fw` is `:temporary`: if it stops, the virtual machine stays alive and the Pi does not reboot, as with systemd (DES13). Exception: the startup guard of `nerves_runtime` (`startup_guard_enabled: true`), which validates a new firmware once every application has started (for example after `mix upload`), reboots the Pi after 15 minutes if `crdt_fw` is not running when it checks at boot, for example because it stopped in a crash loop. Mix refuses a release where an app started as `:temporary` depends on an app in `:load`, so `runtime: false` keeps `:crdt` out of the applications of `crdt_fw`; the release still includes it because it is listed. (OUR.)
+- **`vm.args.eex`** is the one of the Nerves template, with no distribution lines: the name, the cookie and the ports are given at run time (below). (OUR.)
+- **Processes.** `CrdtFw.Application` starts the supervisor `CrdtFw.Supervisor` (`one_for_one`) with one child, `CrdtFw`, a GenServer. `CrdtFw` starts its own supervisor, registered as `CrdtFw.NodeSupervisor` (`one_for_one`, with `Supervisor.start_link/2`, so it is linked to `CrdtFw`), for `Crdt.Replica` and `Crdt.Discovery`. (OUR.)
+- **Start order of `CrdtFw`.** `init/1` only returns `{:ok, state, {:continue, :start}}`; the steps run after it, in `handle_continue/2`, so `CrdtFw.Supervisor` is not blocked while `CrdtFw` waits for the network. In order (OUR):
+  1. Waits for an IPv4 on `wlan0`: it reads it from `vintage_net` and subscribes to its changes (`VintageNet.subscribe/1`) until there is one. Meanwhile it prints `waiting for an IPv4 on wlan0`, so the HDMI screen shows why the node has not started.
+  2. Fixes the distribution ports: `Application.put_env(:kernel, :inet_dist_listen_min, 4218)` and `:inet_dist_listen_max` to `4228`, the range of DES6. They must be set before `Node.start/1`: OTP reads them when it opens the listen socket.
+  3. Starts `epmd`: `System.cmd("epmd", ["-daemon"])`. Nerves does not start it.
+  4. `Node.start(:"<hostname>@<IPv4>")`, with long names. The hostname is the Nerves default, `nerves-XXXX` (from `:inet.gethostname/0`), made safe as in DES6.
+  5. `Node.set_cookie(:cpd2026)`, the cookie of DES6.
+  6. `File.mkdir_p("/data/crdt")`: the root file system is read-only; `/data` is writable and survives firmware updates.
+  7. If `CrdtFw.NodeSupervisor` or `Crdt.Replica` is still registered (an old one that is still stopping after a restart, below), it monitors them (`Process.monitor/1`) and waits for their `:DOWN` messages, at most 10 seconds for each one; if one does not arrive, step 7 fails like any other step (`:timeout`), and the HDMI console says so. Then it starts `CrdtFw.NodeSupervisor` with `Crdt.Replica` (`data_dir: "/data/crdt"` and `nodes:` the list of the configuration) and then `Crdt.Discovery`, with their default names (DES8). The history file is `/data/crdt/nerves-XXXX.jsonl` (DES4.5). The wait means there are never two replicas writing the same file.
+  - It prints `node: <name> (interface: wlan0)`, as the start scripts do (DES11).
+  - If a step fails, it prints which step and why, does not start the replica and stays waiting, without crashing, so it does not loop; the virtual machine stays alive (general rule of DES6). A `Crdt.Replica` that returns `:ignore` (DES6) does not stop `CrdtFw.NodeSupervisor`.
+  - Later changes of the IP are ignored: a new IP needs a restart of the Pi (DES14, REQ13).
+- **Restarts.** `CrdtFw.NodeSupervisor` restarts `Crdt.Replica` or `Crdt.Discovery` when one of them crashes. If it gives up (more than 3 restarts in 5 seconds, the default; for example the disk keeps failing, DES4.5), it stops, and `CrdtFw` stops with it, because they are linked. `CrdtFw.Supervisor` then starts a new `CrdtFw`, which runs the steps again (OUR):
+  - Steps 2 to 5 are skipped if the node is already alive (`Node.alive?()`): the name, the ports and the cookie stay the same.
+  - Step 6 does nothing if the folder exists.
+  - Step 7 starts a new `CrdtFw.NodeSupervisor`. The old one stops with the old `CrdtFw`, but closing `Crdt.Replica` takes time, and the new `CrdtFw` can reach step 7 before. That is why step 7 waits for the `:DOWN` of the old `CrdtFw.NodeSupervisor` and `Crdt.Replica` if they are still registered.
+  - If `CrdtFw.Supervisor` also gives up, the application `crdt_fw` stops; it is `:temporary`, so the virtual machine stays alive and the Pi does not reboot (DES13). Exception: at boot, before the startup guard has checked, it reboots the Pi after 15 minutes ("Release", above).
+- **Why this structure (CON5).** Each process does one thing: `CrdtFw` waits and starts the node, and `CrdtFw.NodeSupervisor` restarts the replica and discovery. No process adds children to the supervisor it belongs to; a restarted `CrdtFw` only waits for the old processes to end, and never adds children to a supervisor that already has them. (OUR.)
+- **Discovery and table.** Discovery is always on: the firmware has no `DISCOVERY` variable. The node table is the list `:nodes` of `config :crdt_fw` in `firmware/config/target.exs`, empty by default; `NODES_FILE` is not used. (OUR.)
+- **Wi-Fi.** `firmware/config/target.exs` configures `wlan0` with a list of `vintage_net_wifi` networks. Each SSID and password is read from an environment variable when the firmware is built, never written in Git: `CRDT_HOTSPOT_SSID` and `CRDT_HOTSPOT_PSK` (the phone hotspot, higher priority), and optionally `CRDT_LAB_SSID` and `CRDT_LAB_PSK` (the lab network). Without the hotspot variables the build stops with a message. The ready image (below) is built with the test hotspot, whose SSID and password are published in `deploy/README-nerves.md` (CON7). (OUR.)
+- **Ready image.** The author's image, for a team that does not build its own. It is in no repository: it holds the hotspot password and the author's SSH key. It is shared through a Google Drive link with restricted access, asked for through GitHub (an issue or the author's profile). `deploy/README-nerves.md` gives the date it was built from the code of the repository, says that `lib/` and `firmware/` have not changed since, and gives its SHA-256, with the commands to check it on macOS, Linux and Windows; every build changes the hash. Its SSH accepts only the author's key. (OUR.)
+- **Another Wi-Fi network at run time.** From the IEx console of the Pi (the HDMI screen with a USB keyboard, or SSH), `VintageNetWiFi.quick_configure("<SSID>", "<password>")` connects to another network, and `vintage_net` keeps the configuration across restarts (`persist` is `true` by default). That is how the Pi works outside the hotspot and the lab. That call may replace the networks of the build instead of adding one; `VintageNet.reset_to_defaults("wlan0")` goes back to them. (OUR.)
+- **SSH.** `nerves_ssh` with the public keys of the user and the partner, read when the firmware is built from the file named by `CRDT_SSH_KEYS`, outside Git, one key per line. Without `CRDT_SSH_KEYS`, or if its file cannot be read, the build stops with a message, as without the hotspot variables. The IEx console of the Pi: `ssh nerves-XXXX.local` (never `nerves.local`, shared by every Nerves device). (OUR.)
+- **Console.** The replica's notices go to the Pi's console, the HDMI screen; DES9 does not change. Over SSH, `Crdt.status()`, `Crdt.history()` and `Crdt.debug()` print in the session, because they print in the calling process (DES9). (OUR.)
+- **Firmware updates.** `mix upload nerves-XXXX.local` installs a new firmware over the network and keeps `/data`. Burning the SD card again clears `/data` (DES14). (OUR.)
+- **Assumptions**, not verified without the hardware; MAN14 checks them, and MAN15 the USB keyboard and `quick_configure/2`:
+  - UDP multicast (DES6.1) works on `wlan0` with Nerves.
+  - The replica's notices appear on the HDMI console and not in the SSH session.
+  - `$HOME` (`/root`) is writable, so `Node.start/1` can create the cookie file before `Node.set_cookie/1` replaces the cookie.
+  - The address list of `vintage_net` for `wlan0` gives the IPv4 as a tuple.
+  - A USB keyboard works on the HDMI console, and `VintageNetWiFi.quick_configure/2` replaces the networks of the build (or adds one).
+  - A computer whose Erlang/OTP patch version differs from 29.1.2 builds the firmware with no problem.
+
+---
+
+## 16. Open questions
 
 None.

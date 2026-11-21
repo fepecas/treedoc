@@ -30,7 +30,7 @@ used here (op, PosID, tombstone, vector clock) are in the
 ```sh
 mix test                          # the 84 tests without network
 mix test --only req7              # only the tests of one requirement
-mix test --include distributed    # all 94, with real nodes
+mix test --include distributed    # all 94 (95 on macOS and Linux), with real nodes
 ```
 
 - `--only reqN` also runs the distributed tests tagged `reqN`.
@@ -88,6 +88,7 @@ include distributed tests.
 | REQ18 The history file is readable, one op per line | DES5.2 | 5: `test/crdt/log_format_test.exs` (4); `test/crdt_history_test.exs` "reload: same text, clock and history..." | MAN7 |
 | REQ19 Incomplete last line is cut; damaged line stops the replica | DES4.5, DES9 | 9: `test/crdt_history_test.exs` (6); `test/crdt/log_format_test.exs` (1); `test/crdt_test.exs` (2) | - |
 | REQ20 A multi-character edit stays together (dist) | DES4.5, DES7 | 5: `test/crdt_test.exs` (2); `test/crdt_history_test.exs` (2); `test/crdt_distributed_test.exs` (f) | MAN2 |
+| REQ21 The node runs on a Raspberry Pi 4 with Nerves | DES15 | manual (0 tests) | MAN14, MAN15 |
 
 The distributed tests, by letter: (a) b2 waits, b1 arrives: both are
 forwarded to a connected node, with no table; (b) a connected node

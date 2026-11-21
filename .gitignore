@@ -4,14 +4,26 @@
 # Output of "mix test --cover".
 /cover/
 
-# Downloaded dependencies (the project has none, CON1).
+# Downloaded dependencies (the root project has none, CON1).
 /deps/
+
+# Firmware build output and dependencies (DES15). The image holds the Wi-Fi
+# passwords and SSH keys of the build: never in Git.
+/firmware/_build/
+/firmware/deps/
+/firmware/*.img
+
+# Local SD-card backups. They hold Wi-Fi passwords: never committed or exported.
+/backup/
 
 # Generated docs.
 /doc/
 
 # Temporary files, e.g. from tests.
 /tmp/
+
+# macOS Finder metadata.
+.DS_Store
 
 # Dump written when the VM crashes.
 erl_crash.dump

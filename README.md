@@ -17,15 +17,33 @@ step works by itself.
 | Step | You need | You will see | Guide |
 |---|---|---|---|
 | 1. One node alone on one computer | Elixir | You insert text, halt the node, start it again and the text is back | [Quick start, "One node"](#one-node) |
-| 2. Three nodes on one computer | Three terminals | What you type in one node appears in the other two | [Quick start, "Three nodes"](#three-nodes), then [MANUAL-TESTS.md, "Short path"](docs/MANUAL-TESTS.md#short-path) |
-| 3. Two or more computers on the same network | Two computers, for example Windows and macOS, each with a clone of this repository. One start command per computer: the nodes find each other, with no table to edit | Edits on one computer appear on the other | [NETWORK.md](docs/NETWORK.md) (not yet validated) |
-| 4. One computer and one Raspberry Pi | A computer and a Pi on the same network, both with a clone, each started with its start script | Edits on the computer appear on the Pi, and back | [NETWORK.md](docs/NETWORK.md), with `scripts/start.sh` on the Pi (Raspberry Pi OS is Linux). Raspberry Pi setup guide (system and Elixir): coming |
-| 5. Two Raspberry Pis | Two Pis with a clone, each with its own hostname, and no computer as a node. You reach them over SSH from any device | Edits on one Pi appear on the other | [NETWORK.md](docs/NETWORK.md), as in step 4. Raspberry Pi setup guide (system and Elixir): coming |
-| 6. Your own implementation | Your node, on a Pi or a computer, that speaks our contract | Your node and ours exchange operations | [INTEGRATION.md](docs/INTEGRATION.md). Tested on one computer. Optional: a team that stops at step 5 has a complete system |
+| 2. Three nodes on one computer | Three terminals | What you type in one node appears in the other two | [Quick start, "Three nodes"](#three-nodes) |
+| 3. Two or more computers on the same network | Two computers, for example Windows and macOS, each with a clone of this repository. One start command per computer: the nodes find each other, with no table to edit | Edits on one computer appear on the other | [NETWORK.md](docs/NETWORK.md) |
+| 4. A computer and a Pi with Raspberry Pi OS | A computer and a Pi on the same network, both with a clone, each started with its start script | Edits on the computer appear on the Pi, and back | [README-pi.md](deploy/README-pi.md); [INTEGRATION.md, "Add another Raspberry Pi"](docs/INTEGRATION.md#add-another-raspberry-pi) |
+| 5a. A computer and a Pi 4 with Nerves: ready image | A Pi 4, a microSD card, the test hotspot, and a computer as in step 3 | The Pi boots into a node and joins by itself | [README-nerves.md, Path A](deploy/README-nerves.md#path-a-ready-image) |
+| 5b. A computer and a Pi 4 with Nerves: build your own | As in 5a, plus Elixir and the Nerves tools; your Wi-Fi and SSH keys | As in 5a, and an SSH console on the Pi | [README-nerves.md, Path B](deploy/README-nerves.md#path-b-build-your-own) |
+| 6. Two Raspberry Pis | Two Pis, any combination of steps 4 and 5, and no computer as a node | Edits on one Pi appear on the other | [README-pi.md](deploy/README-pi.md), [NETWORK.md](docs/NETWORK.md) |
+| 7. Your own implementation | Your node, on a Pi or a computer, that speaks our contract | Your node and ours exchange operations | [INTEGRATION.md](docs/INTEGRATION.md). Optional: a team that stops at step 6 has a complete system |
 
 Each step adds one thing to the one before: a second process, a second
-machine, a small device, a device without a screen, another
-implementation.
+machine, a small device, a device with nothing to install, no computer
+at all, another implementation.
+
+Where each step stands:
+
+| Step | Status | Date | Platforms and versions |
+|---|---|---|---|
+| 1. One node | Done | November 2026 | Windows, Elixir 1.20.4, OTP 29 |
+| 2. Three nodes on one computer | Done | November 2026 | Windows, Elixir 1.20.4, OTP 29 |
+| 3. Two computers | Done | November 2026 | Windows (Elixir 1.20.4, OTP 29) and macOS (Elixir 1.20.5, OTP 29), home Wi-Fi |
+| 4. A computer and a Pi | Done | November 2026 | Windows and Raspberry Pi 4, Raspberry Pi OS 64-bit (Elixir 1.18.3, OTP 27), phone hotspot; a Mac joined as a third machine |
+| 5a. A Pi 4 with Nerves, ready image | In progress | November 2026 | Raspberry Pi 4, iPhone hotspot, and macOS (Elixir 1.20.5, OTP 29): MAN14 passes (discovery, MAN1, MAN4, MAN5); MAN15 pending |
+| 5b. A Pi 4 with Nerves, own build | In progress | November 2026 | Built on macOS (OTP 29.1.2, `nerves_system_rpi4` 2.2.2); the image of 5a. Linux and WSL2 untested |
+| 6. Two Pis | Pending | - | Waiting for a second Pi |
+| 7. Your own implementation | Pending | - | The contract was tested with a foreign node on one computer only |
+
+The results of steps 3 and 4:
+[MANUAL-TESTS.md, MAN9 to MAN13](docs/MANUAL-TESTS.md#between-computers-tests-run-man9-to-man13).
 
 ## Reference
 
@@ -38,10 +56,8 @@ implementation.
 - [CODE-MAP.md](docs/CODE-MAP.md): a path to study the code, module by
   module.
 
-Known limitations (short texts, tombstones kept forever, discovery only
-on the local network and more; a tombstone is a deleted character that is kept, hidden, with
-its position):
-[DESIGN.md, section 14](docs/DESIGN.md#14-known-limitations).
+Known limitations: see [below](#known-limitations), and the full list
+in [DESIGN.md, section 14](docs/DESIGN.md#14-known-limitations).
 
 ## Quick start
 
@@ -134,11 +150,85 @@ Each node keeps its history in `data/<name>.jsonl` (the name before
 `@`) and reloads it on restart. To start from scratch, halt every node (`System.halt()`) and
 delete `data/*.jsonl`.
 
+### On a network: one node per computer
+
+Once per computer: clone, compile and test, as above. Then start the
+node with no name and no IP: the script uses the hostname and picks the
+Wi-Fi IPv4 by itself, and the nodes find each other.
+
+Windows (PowerShell; the network profile must be Private, see
+[NETWORK.md](docs/NETWORK.md), section 2):
+
+```powershell
+.\scripts\start.ps1
+```
+
+macOS:
+
+```sh
+./scripts/start.sh
+```
+
+Raspberry Pi (Raspberry Pi OS 64-bit):
+
+```sh
+sudo apt install -y elixir git
+git clone <repository URL> ~/crdt
+cd ~/crdt
+mix compile
+mix test
+./scripts/start.sh
+```
+
+Type the `./` or `.\` in front of the script. Check on each node with
+`Node.list()` and `Crdt.status()`. To use a neutral node name instead
+of the hostname: `-Name <name>` (Windows) or `--name <name>`.
+
+## Network requirements
+
+- All the nodes on the same Wi-Fi or phone hotspot; discovery does not
+  cross routers. Some networks (labs, guest Wi-Fi) block multicast:
+  then use a node table ([NETWORK.md](docs/NETWORK.md), section 5).
+- Ports: TCP 4369 (EPMD), TCP 4218 to 4228 (Erlang distribution, fixed
+  by the start scripts), UDP 45892 (discovery). On Windows, the network
+  profile Private and three firewall rules; on macOS, allow `beam.smp`
+  when asked.
+- Every computer with its own hostname.
+- The cookie `cpd2026` is shared by the whole course: anyone with it
+  can run code on your node. Use trusted networks only
+  ([INTEGRATION.md](docs/INTEGRATION.md#security-first)).
+
+## Known limitations
+
+- The history grows fast when typing in a row: each position identifier
+  is one step longer per character and repeats the full node name
+  (observed: 14 characters gave a history of about 6 KB). The whole
+  history is resent on every connection. Keep texts short.
+- The node name includes the IP, so one computer used on two networks
+  shows as two authors. It does not affect convergence.
+- One console line per dropped duplicate: a reconnection prints many
+  `duplicate dropped` lines. It is not an error.
+- Reconnection may be slow: once, on a home Wi-Fi, a restarted node
+  reconnected after about 30 s (observed, not measured); on a phone
+  hotspot it was immediate.
+- Node names are sent to every node and stored in every operation: on a
+  work computer, start with a neutral name (`-Name` / `--name`).
+- On a Pi with Nerves, a new IP needs a restart, burning the card again
+  deletes the history in `/data`, and the notices show on an HDMI
+  screen, not over SSH
+  ([README-nerves.md](deploy/README-nerves.md#update-without-burning)).
+- Tombstones (deleted characters, kept hidden with their position) stay
+  forever; discovery only reaches the local network. More in
+  [DESIGN.md, section 14](docs/DESIGN.md#14-known-limitations).
+
 ## How to read this project
 
 The documents and the code use short codes. Every REQ, CON, CLS,
 implemented PAP section and `DESIGN.md` DES3 to DES9 also appears in a comment
-or a `@doc` in `lib/` (or `mix.exs`), where it is implemented.
+or a `@doc` in `lib/` (or `mix.exs`), where it is implemented. The
+folder `firmware/` is the firmware for a Raspberry Pi 4 with Nerves
+(`DESIGN.md` DES15): it starts the same node of `lib/` with no start
+script; REQ21 and DES15 are cited there.
 
 | Code | What it is | Example | Where it lives |
 |---|---|---|---|
