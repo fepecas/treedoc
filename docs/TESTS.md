@@ -81,7 +81,7 @@ include distributed tests.
 | REQ11 An op reaches everyone even if its origin is gone (dist) | DES4.3 | 4: `test/crdt/causal_test.exs` "simulation with Treedoc" (2); `test/crdt_test.exs` "an echo of an own op..."; `test/crdt_distributed_test.exs` (a) | MAN4 |
 | REQ12 A (re)connecting node gets what it misses (dist) | DES4.4, DES6 | 3: `test/crdt_test.exs` "nodeup, nodedown and hello count for every node, also outside the table"; `test/crdt_distributed_test.exs` (c), (e) | MAN4 |
 | REQ13 A restarted node recovers from disk, also with a new IP; no repeated ids (dist) | DES4.5, DES4.6 | 18: `test/crdt_history_test.exs` (14, with "a new IP in the node name..."); `test/crdt/causal_test.exs` "next_local/2" (2); `test/crdt_distributed_test.exs` (e), (f) | MAN5 |
-| REQ14 Each node finds the others (discovery) or connects to its optional table; bad table file (dist) | DES6, DES6.1 | 14: `test/crdt/config_test.exs` (4); `test/crdt/discovery_test.exs` (2); `test/crdt_test.exs` "node table from NODES_FILE" (2); `test/crdt_distributed_test.exs` (d), (g), (h), (i), (j), (k); (k) runs only on macOS and Linux | MAN4 |
+| REQ14 Each node finds the others (discovery) or connects to its optional table; bad table file (dist) | DES6, DES6.1 | 15: `test/crdt/config_test.exs` (4); `test/crdt/discovery_test.exs` (3); `test/crdt_test.exs` "node table from NODES_FILE" (2); `test/crdt_distributed_test.exs` (d), (g), (h), (i), (j), (k); (k) runs only on macOS and Linux | MAN4 |
 | REQ15 Every message goes to every connected node (dist) | DES6 | 5: `test/crdt_test.exs` "nodeup, nodedown and hello count for every node, also outside the table"; `test/crdt_distributed_test.exs` (a), (b), (c), (e) | MAN1 |
 | REQ16 Local and remote edits at once do not corrupt state (dist) | DES7, DES7.1 | 1: `test/crdt_distributed_test.exs` (d) | MAN8 |
 | REQ17 The user can see text, table, discovery, connected nodes, clock, buffer, history, notices (dist) | DES9 | 12: `test/crdt_test.exs` (8); `test/crdt/treedoc_test.exs` "debug_rows/1"; `test/crdt/causal_test.exs` "waiting reports the last seq missing from each node"; `test/crdt_distributed_test.exs` (b), (h) | MAN7 |
@@ -89,6 +89,8 @@ include distributed tests.
 | REQ19 Incomplete last line is cut; damaged line stops the replica | DES4.5, DES9 | 9: `test/crdt_history_test.exs` (6); `test/crdt/log_format_test.exs` (1); `test/crdt_test.exs` (2) | - |
 | REQ20 A multi-character edit stays together (dist) | DES4.5, DES7 | 5: `test/crdt_test.exs` (2); `test/crdt_history_test.exs` (2); `test/crdt_distributed_test.exs` (f) | MAN2 |
 | REQ21 The node runs on a Raspberry Pi 4 with Nerves | DES15 | manual (0 tests) | MAN14, MAN15 |
+| REQ22 Our node edits one document with another implementation of our protocol; partitions flag off | DES5.1, DES6, DES11, DES15 | 2: `test/crdt/received_message_test.exs` "the ops our replicas make are valid..."; `test/crdt_test.exs` "received messages" (an insert of the other implementation's shape) | MAN16, MAN17, MAN18 |
+| REQ23 A malformed or unknown message is dropped with a notice; the replica never crashes (dist) | DES5.1, DES6, DES6.1, DES9 | 13: `test/crdt/received_message_test.exs` (5); `test/crdt_test.exs` "received messages" (5); `test/crdt/discovery_test.exs` (1); `test/crdt_distributed_test.exs` (l), (m) | MAN16 |
 
 The distributed tests, by letter: (a) b2 waits, b1 arrives: both are
 forwarded to a connected node, with no table; (b) a connected node
@@ -102,4 +104,6 @@ announcement connects, its own name, connected nodes and other packets
 do not; (i) busy port: the second node of a machine only announces; (j)
 the application starts discovery on a named node unless
 `DISCOVERY=off`; (k) a socket that cannot open: `:ignore` and a message
-(macOS and Linux only).
+(macOS and Linux only); (l) another node casts malformed terms: the
+replica stays and keeps editing; (m) an op with an extra key is
+forwarded without it.

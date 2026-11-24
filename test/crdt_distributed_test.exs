@@ -353,4 +353,33 @@ defmodule CrdtDistributedTest do
   after
     System.delete_env("DISCOVERY")
   end
+
+  @tag :req23
+  test "(l) another node casts malformed terms: the replica stays and keeps editing", %{
+    table: table,
+    tmp_dir: dir
+  } do
+    pid = start_replica(dir, [])
+    bad = [%{}, {:remote, %{}}, {:hello, %{}}, :unknown]
+
+    for _ <- 1..5, term <- bad do
+      :ok = :rpc.call(table, :gen_server, :cast, [{Replica, node()}, {:remote, term}])
+      :ok = :rpc.call(table, :gen_server, :cast, [{Replica, node()}, term])
+      :rpc.call(table, :erlang, :send, [{Replica, node()}, term])
+    end
+
+    assert {:error, :unknown} == :rpc.call(table, :gen_server, :call, [{Replica, node()}, :x])
+    assert Process.whereis(Replica) == pid
+    assert Crdt.insert(0, "ok") == :ok
+    assert Crdt.text() == "ok"
+  end
+
+  @tag :req23
+  test "(m) an op with an extra key is forwarded without it", %{table: table, tmp_dir: dir} do
+    start_replica(dir, [])
+    GenServer.cast(Replica, {:remote, Map.put(@b1, :extra, 1)})
+    assert Crdt.text() == "x"
+    assert eventually(fn -> count(table, {:remote, @b1}) == 1 end)
+    refute Enum.any?(received(table), &match?({:remote, %{extra: _}}, &1))
+  end
 end

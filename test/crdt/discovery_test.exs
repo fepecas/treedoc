@@ -16,4 +16,15 @@ defmodule Crdt.DiscoveryTest do
       assert Discovery.parse(packet) == :ignore
     end
   end
+
+  @tag :req23
+  @tag :req14
+  test "a tagged name that cannot be an atom is ignored: over 255 bytes or not valid UTF-8" do
+    name = String.duplicate("a", 251) <> "@x.y"
+    assert Discovery.parse("crdt-treedoc-1 " <> name) == {:ok, String.to_atom(name)}
+
+    for bad <- [String.duplicate("a", 252) <> "@x.y", "pi" <> <<255>> <> "@1.2.3.4"] do
+      assert Discovery.parse("crdt-treedoc-1 " <> bad) == :ignore
+    end
+  end
 end

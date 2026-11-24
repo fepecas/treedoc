@@ -77,7 +77,8 @@ fi
 echo "node: $name@$ip (interface: $interface)"
 
 # Fixed distribution ports, so the firewall needs fixed rules (DES6)
-export ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228"
+# REQ22, DES6: a dropped link must not cut the other links (partitions flag off)
+export ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228 prevent_overlapping_partitions false"
 cd "$(dirname "$0")/.." || exit 1
 mix compile || exit 1
 exec iex --name "$name@$ip" --cookie cpd2026 -S mix

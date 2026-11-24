@@ -275,6 +275,140 @@ defmodule CrdtTest do
     end
   end
 
+  describe "received messages (docs/DESIGN.md DES5.1)" do
+    setup %{tmp_dir: dir} do
+      {pid, io} = start_quiet({Replica, me: @me, nodes: [], data_dir: dir, name: Replica})
+      :ok = Crdt.insert(0, "ab")
+      %{pid: pid, io: io, history_file: Path.join(dir, "a.jsonl")}
+    end
+
+    defp kept(pid), do: Map.take(:sys.get_state(pid), [:doc, :vc, :buffer, :history])
+
+    defp last_notice(io) do
+      Crdt.text()
+      {_, out} = StringIO.contents(io)
+      out |> String.split("\n", trim: true) |> List.last()
+    end
+
+    defp dropped(term),
+      do: "[a@x] malformed message dropped: " <> inspect(term, limit: 5, printable_limit: 40)
+
+    @bad_remote [
+      %{},
+      :x,
+      %{op: :upd, from: @b, vc: %{@b => 1}, pos: [{1, 1, @b}]},
+      %{op: :ins, from: @b, vc: %{@b => 1}, pos: [{1, 1, @b}]},
+      %{op: :ins, from: @b, vc: %{@b => 1}, pos: [{1, 1, @b}], ch: "xy"},
+      %{op: :ins, from: @b, vc: %{@b => 1}, pos: [{1, 1, @b}], ch: <<255>>},
+      %{op: :ins, from: @b, vc: %{@b => 1}, pos: [], ch: "x"},
+      %{op: :ins, from: @b, vc: %{@b => 1}, pos: [{2, 1, @b}], ch: "x"},
+      %{op: :ins, from: @b, vc: %{@b => 1}, pos: [{1, 1, nil}], ch: "x"},
+      # the old code dropped this one as a duplicate, and applied the next one
+      %{op: :ins, from: @b, vc: %{@b => 0}, pos: [{1, 1, @b}], ch: "x"},
+      %{op: :ins, from: nil, vc: %{nil => 1}, pos: [{1, 1, @b}], ch: "x"},
+      %{op: :ins, from: @b, vc: %{@b => 1, "c" => 1}, pos: [{1, 1, @b}], ch: "x"},
+      %{op: :del, from: @b, vc: %{@b => -1}, pos: [{1, 1, @b}]}
+    ]
+
+    @tag :req23
+    test "each malformed or unknown message prints the notice and changes nothing", %{
+      pid: pid,
+      io: io,
+      history_file: file
+    } do
+      before = kept(pid)
+      bytes = File.read!(file)
+
+      for msg <- @bad_remote do
+        GenServer.cast(Replica, {:remote, msg})
+        assert last_notice(io) == dropped({:remote, msg})
+      end
+
+      for msg <- [{:hello, %{}}, {:hello, "b@x"}, :unknown, {:remote, @b1, :extra}] do
+        GenServer.cast(Replica, msg)
+        assert last_notice(io) == dropped(msg)
+      end
+
+      for msg <- [:unknown, {:nodeup}, {:remote, @b1}] do
+        send(pid, msg)
+        assert last_notice(io) == dropped(msg)
+      end
+
+      for request <- [:unknown, {:insert, 0, 123}, {:history, :last}] do
+        assert GenServer.call(Replica, request) == {:error, :unknown}
+        assert last_notice(io) == dropped(request)
+      end
+
+      {_, out} = StringIO.contents(io)
+      refute out =~ "hello from"
+      assert Process.whereis(Replica) == pid
+      assert kept(pid) == before
+      assert File.read!(file) == bytes
+
+      # a valid op after them is applied
+      GenServer.cast(Replica, {:remote, @b1})
+      assert Crdt.text() == "abx"
+    end
+
+    @tag :req23
+    test "random terms with a fixed seed are dropped and the replica stays", %{pid: pid} do
+      :rand.seed(:exsss, {23, 8, 2026})
+      before = kept(pid)
+
+      for _ <- 1..300 do
+        term = random_term(3)
+        GenServer.cast(Replica, {:remote, term})
+        GenServer.cast(Replica, term)
+        send(pid, term)
+      end
+
+      Crdt.text()
+      assert Process.whereis(Replica) == pid
+      assert kept(pid) == before
+    end
+
+    # Never a valid op: the maps lack :from or have a bad :vc
+    defp random_term(0), do: Enum.random([nil, true, @b, -1, 0, 1, 1.5, "", "x", <<255>>])
+
+    defp random_term(depth) do
+      case :rand.uniform(4) do
+        1 -> random_term(0)
+        2 -> for _ <- 1..:rand.uniform(3), do: random_term(depth - 1)
+        3 -> {random_term(depth - 1), random_term(depth - 1), random_term(depth - 1)}
+        4 -> %{op: Enum.random([:ins, :del]), pos: random_term(depth - 1), vc: random_term(0)}
+      end
+    end
+
+    @tag :req23
+    test "a long term prints one short notice", %{io: io} do
+      GenServer.cast(Replica, {:remote, List.duplicate(String.duplicate("x", 10_000), 50)})
+      # five strings of 40 characters at most, not 50 of 10 000
+      assert String.length(last_notice(io)) < 300
+    end
+
+    @tag :req23
+    test "extra keys are removed before the op is applied, kept and stored", %{pid: pid} do
+      GenServer.cast(Replica, {:remote, Map.put(@b1, :extra, 1)})
+      del = %{op: :del, from: @b, vc: %{@b => 2}, pos: @b1.pos}
+      GenServer.cast(Replica, {:remote, Map.put(del, :ch, "z")})
+      Crdt.text()
+      assert Enum.take(:sys.get_state(pid).history, -2) == [@b1, del]
+    end
+
+    @tag :req22
+    @tag :req23
+    test "an insert of the other implementation's shape lands in the right place" do
+      # several chars in one call, balanced: "b" sits between, "a" and "c" are its children,
+      # and the first op goes through the step {1, 2, c} of an op not applied yet
+      c = :c@x
+      a = %{op: :ins, from: c, vc: %{c => 1}, pos: [{1, 2, c}, {0, 1, c}], ch: "1"}
+      b = %{op: :ins, from: c, vc: %{c => 2}, pos: [{1, 2, c}], ch: "2"}
+      d = %{op: :ins, from: c, vc: %{c => 3}, pos: [{1, 2, c}, {1, 3, c}], ch: "3"}
+      for op <- [a, b, d], do: GenServer.cast(Replica, {:remote, op})
+      assert Crdt.text() == "ab123"
+    end
+  end
+
   describe "node table from NODES_FILE" do
     setup do
       on_exit(fn -> System.delete_env("NODES_FILE") end)

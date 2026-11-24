@@ -18,8 +18,10 @@ defmodule Crdt.Discovery do
   @doc "The announcement of `node`: our tag and its name."
   def packet(node), do: @tag <> Atom.to_string(node)
 
-  @doc "`{:ok, node}` if the packet has our tag (DES6.1), `:ignore` otherwise."
-  def parse(@tag <> name) when name != "", do: {:ok, String.to_atom(name)}
+  @doc "`{:ok, node}` if the packet has our tag and a name that can be an atom (DES6.1, REQ23)."
+  def parse(@tag <> name) when name != "" and byte_size(name) <= 255,
+    do: if(String.valid?(name), do: {:ok, String.to_atom(name)}, else: :ignore)
+
   def parse(_other), do: :ignore
 
   @impl true

@@ -23,7 +23,7 @@ step works by itself.
 | 5a. A computer and a Pi 4 with Nerves: ready image | A Pi 4, a microSD card, the test hotspot, and a computer as in step 3 | The Pi boots into a node and joins by itself | [README-nerves.md, Path A](deploy/README-nerves.md#path-a-ready-image) |
 | 5b. A computer and a Pi 4 with Nerves: build your own | As in 5a, plus Elixir and the Nerves tools; your Wi-Fi and SSH keys | As in 5a, and an SSH console on the Pi | [README-nerves.md, Path B](deploy/README-nerves.md#path-b-build-your-own) |
 | 6. Two Raspberry Pis | Two Pis, any combination of steps 4 and 5, and no computer as a node | Edits on one Pi appear on the other | [README-pi.md](deploy/README-pi.md), [NETWORK.md](docs/NETWORK.md) |
-| 7. Your own implementation | Your node, on a Pi or a computer, that speaks our contract | Your node and ours exchange operations | [INTEGRATION.md](docs/INTEGRATION.md). Optional: a team that stops at step 6 has a complete system |
+| 7. Your own implementation | Your node, on a Pi or a computer, that speaks our contract (`prevent_overlapping_partitions false` included) | Your node and ours edit the same document; a malformed message of yours is dropped with a notice | [INTEGRATION.md](docs/INTEGRATION.md); [teams/](teams/README.md); [MANUAL-TESTS.md, MAN16 to MAN18](docs/MANUAL-TESTS.md#interoperation-man16-to-man18). Optional: a team that stops at step 6 has a complete system |
 
 Each step adds one thing to the one before: a second process, a second
 machine, a small device, a device with nothing to install, no computer
@@ -37,10 +37,10 @@ Where each step stands:
 | 2. Three nodes on one computer | Done | November 2026 | Windows, Elixir 1.20.4, OTP 29 |
 | 3. Two computers | Done | November 2026 | Windows (Elixir 1.20.4, OTP 29) and macOS (Elixir 1.20.5, OTP 29), home Wi-Fi |
 | 4. A computer and a Pi | Done | November 2026 | Windows and Raspberry Pi 4, Raspberry Pi OS 64-bit (Elixir 1.18.3, OTP 27), phone hotspot; a Mac joined as a third machine |
-| 5a. A Pi 4 with Nerves, ready image | In progress | November 2026 | Raspberry Pi 4, iPhone hotspot, and macOS (Elixir 1.20.5, OTP 29): MAN14 passes (discovery, MAN1, MAN4, MAN5); MAN15 pending |
-| 5b. A Pi 4 with Nerves, own build | In progress | November 2026 | Built on macOS (OTP 29.1.2, `nerves_system_rpi4` 2.2.2); the image of 5a. Linux and WSL2 untested |
-| 6. Two Pis | Pending | - | Waiting for a second Pi |
-| 7. Your own implementation | Pending | - | The contract was tested with a foreign node on one computer only |
+| 5a. A Pi 4 with Nerves, ready image | Done | November 2026 | Raspberry Pi 4, iPhone hotspot, and macOS (Elixir 1.20.5, OTP 29): MAN14 passes (discovery, MAN1, MAN4, MAN5). Two Pis with the image on another router with the test hotspot's SSID and password: both worked, each seen on its own monitor. MAN15 (another Wi-Fi network) not run |
+| 5b. A Pi 4 with Nerves, own build | Done | November 2026 | Built on macOS twice (OTP 29.1.2, `nerves_system_rpi4` 2.2.2), the images of 5a. Also built from this repository on Linux for a Raspberry Pi 3, and it ran there. WSL2 untested |
+| 6. Two Pis | Done | November 2026 | Two Raspberry Pi 4 with the ready Nerves image, on a router with no Internet that broadcasts the test hotspot's network, no computer as a node; each Pi joined under a new name and kept its history |
+| 7. Your own implementation | Done | November 2026 | Carlixgonzam's implementation ([teams/carla.md](teams/carla.md)): our node on Windows, hers on macOS (it does not build on Windows), iPhone hotspot; MAN16 passed (discovery, MAN1, MAN2, MAN3); MAN17 with our Pi with Nerves passed (discovery, MAN1, MAN3); MAN18 (Pi to Pi) pending |
 
 The results of steps 3 and 4:
 [MANUAL-TESTS.md, MAN9 to MAN13](docs/MANUAL-TESTS.md#between-computers-tests-run-man9-to-man13).

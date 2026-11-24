@@ -66,19 +66,20 @@ author's SSH key. Ask for it in an issue of this repository on GitHub,
 or through the author's GitHub profile. It is shared through a Google
 Drive link with restricted access.
 
-- Built on `November 21, 2026` from the code of this repository; `lib/` and
+- Built on `November 24, 2026` from the code of this repository; `lib/` and
   `firmware/` have not changed since.
-- SHA-256: `ec65313755407288c27c1db340657099ceefea7a7dd961726eb669002163e7fa`
+- SHA-256: `61245c0ad4c630ec44e5aaea2b565193e51b290d6d1071aca88d21514eec83be`
 
-Check the file before burning it; the output must be that hash:
+Check the file you got before burning it (`<image file>` is its name);
+the output must be that hash:
 
 ```sh
-shasum -a 256 crdt_fw.img        # macOS
-sha256sum crdt_fw.img            # Linux
+shasum -a 256 <image file>        # macOS
+sha256sum <image file>            # Linux
 ```
 
 ```powershell
-Get-FileHash -Algorithm SHA256 crdt_fw.img   # Windows
+Get-FileHash -Algorithm SHA256 <image file>   # Windows
 ```
 
 Every build gives a new hash, even from the same commit. A hash that
@@ -87,7 +88,8 @@ does not match is not this image.
 ### Burn the card
 
 1. Open Raspberry Pi Imager. Device: Raspberry Pi 4. Operating system:
-   "Use custom", then `crdt_fw.img`.
+   "Use custom", then the image file (the ready image, or the
+   `crdt_fw.img` of your own build, Path B).
 2. Storage: the microSD card. Check its size: the card is erased.
 3. OS customisation: No (or greyed out). The settings come from the
    firmware.
@@ -121,7 +123,15 @@ ssh nerves-XXXX.local
 
 Use the name of the Pi, never `nerves.local`, which every Nerves device
 answers. If `.local` does not resolve, use `ssh <IP>`. The first time,
-ssh asks to confirm the host key. The console is IEx:
+ssh asks to confirm the host key. After the card is burned again, the
+Pi has a new host key and ssh warns that it changed; remove the old one
+and connect again (with `<IP>` instead of the name if you used the IP):
+
+```sh
+ssh-keygen -R nerves-XXXX.local
+```
+
+The console is IEx:
 
 ```elixir
 Crdt.status()      # node, history file /data/crdt/nerves-XXXX.jsonl, discovery, connected
@@ -131,6 +141,23 @@ Crdt.text()
 `Crdt.status()`, `Crdt.history()` and `Crdt.debug()` print in the SSH
 session; the replica's notices only on an HDMI screen. Type `exit` to
 leave.
+
+From a computer whose key is not in the image (the ready image accepts
+only the author's key): at the Pi's HDMI console, with a USB keyboard,
+add a temporary user with a password:
+
+```elixir
+NervesSSH.add_user("<USER>", "<PASSWORD>")
+```
+
+Then, from the computer:
+
+```sh
+ssh <USER>@nerves-XXXX.local
+```
+
+The user lives in memory only: it is gone after a reboot. Tested with
+two Pis on one network.
 
 ### Turn the Pi off
 

@@ -82,6 +82,9 @@ References:
 | MAN6 with two Pis: MAN2 with two nodes; MAN4 is halting one Pi, writing on the other, starting it again and seeing that it catches up; a third node (a computer with `crdt@IP`) is optional. REQ1 is tested locally with three nodes | OUR (there are two Pis, DES13) |
 | `deploy/crdt.service` (not included yet) runs the node without IEx as the user created in Raspberry Pi Imager, in the project folder, with the name and IP of `scripts/start.sh`, after the network and with `Restart=on-failure`; `mix compile` is done before, by hand | OUR (the service has no terminal and does not compile, DES13) |
 | A node of another team receives and sends our operations once it is connected to ours (by its table, ours or discovery); it receives `{:remote, msg}` and `{:hello, node}` casts on a process registered as `Crdt.Replica` | OUR (the replica sends to every connected node, DES6; the messages of DES5.1) |
+| Another team's implementation that follows our protocol edits the same document with ours; our protocol does not change for it | OUR (agreed with the other teams, REQ22) |
+| A malformed or unknown message is dropped with a notice; the replica never crashes because of a message. The checks are the same as those of the other implementation, except one (a step `node` `nil`, `true` or `false` is dropped, DES5.1). A discovery packet whose name cannot be an atom is ignored | OUR (a crash lost the buffer, resent every history and, repeated, stopped the editor; neither side drops what the other accepts, DES5.1, REQ23) |
+| Every node starts with `-kernel prevent_overlapping_partitions false`; `net_ticktime` stays at the OTP default | OUR (a dropped link does not cut the other links; the same rule as the other implementation, DES6, REQ22) |
 | A Raspberry Pi 4 can run the node with Nerves firmware: a separate project `firmware/` (poncho) that depends on `:crdt` with `path: ".."` and `runtime: false`; in its release `:crdt` is only loaded, so `Crdt.Application` does not run | ASG (Raspberry Pi), OUR (Nerves; `lib/` does not change, DES15) |
 | On Nerves, `CrdtFw` starts the node at run time: wait for the IPv4 of `wlan0`, fix the distribution ports, start `epmd`, `Node.start/1`, `Node.set_cookie/1`, create `/data/crdt`, then `Crdt.Replica` and `Crdt.Discovery` under its own `one_for_one` supervisor, `CrdtFw.NodeSupervisor`; the steps run after `init/1`, and a restarted `CrdtFw` repeats them safely | OUR (Nerves does not start Erlang distribution; the root file system is read-only and `/data` is writable, DES15) |
 | On Nerves, the distribution ports 4218 to 4228 are set with `Application.put_env(:kernel, ...)` before `Node.start/1`, not in `vm.args.eex` | OUR (OTP reads them when the listen socket opens; the same firewall rules as DES6, DES15) |
@@ -286,7 +289,7 @@ Without the file, a node that restarts numbers its operations from 1 again. The 
 
 ## 5. Messages
 
-*Covers: REQ5, REQ6, REQ18.*
+*Covers: REQ5, REQ6, REQ18, REQ22, REQ23.*
 
 ### 5.1 In memory and over the network (Elixir terms)
 
@@ -298,6 +301,19 @@ Without the file, a node that restarts numbers its operations from 1 again. The 
 They are sent with `GenServer.cast({Crdt.Replica, node}, {:remote, msg})`.
 
 There is also a control message, with no operation: `GenServer.cast({Crdt.Replica, node}, {:hello, me})` (DES4.4). It is not stored in the history.
+
+**Checking a received message (REQ23).** Before `Crdt.Causal` sees it, the replica checks every `{:remote, msg}`. `msg` is valid only if all of this holds (the same rules as the other implementation we interoperate with, so neither side drops what the other accepts, REQ22; one deliberate difference, below):
+- It is a map with `op: :ins` and a `ch`, or `op: :del`.
+- `from` is an atom other than `nil`, `true` and `false`.
+- `vc` is a map of at most 10 000 keys, whose keys are atoms and whose values are integers ≥ 0, and `vc[from]` is an integer ≥ 1.
+- `pos` is a non-empty list of steps `{bit, seq, node}`, with `bit` the integer 0 or 1, `seq` an integer ≥ 1 and `node` an atom other than `nil`, `true` and `false`.
+- For `:ins`, `ch` is a valid UTF-8 binary of exactly one grapheme (`String.first(ch) == ch`).
+
+The one deliberate difference: the other implementation accepts `nil`, `true` and `false` as the `node` of a step; we drop them, because the history file writes them as JSON `null`, `true` and `false` and could not load them back (DES5.2, DES4.5: the next start would find a damaged line). No correct node sends them: a step's `node` is always a node name.
+
+The checks live in the pure modules: `Crdt.Treedoc.valid_op?/1` (`op`, `pos`, `ch`) and `Crdt.Causal.valid_clock?/1` (`from`, `vc`) (DES8). A valid message keeps only the keys of the format (`op`, `from`, `vc`, `pos`, and `ch` for an insert); any other key is removed before it is applied, stored or forwarded. A message that is not valid is dropped with the notice of DES9 and changes nothing. `{:hello, node}` is valid only if `node` is an atom. Any other cast, plain message or call that the replica does not know is dropped too; an unknown call answers `{:error, :unknown}`. A known call with arguments of the wrong type counts as unknown: `{:insert, index, text}` is taken only when `text` is a binary. (OUR.)
+
+The check does not look at the meaning of a valid op: a gap in `seq`, a `vc[k]` that is too high or a PosID already used behave as before (`INTEGRATION.md`, rules 1 to 4).
 
 ### 5.2 In the file (JSON, one line per operation)
 
@@ -314,7 +330,7 @@ There is also a control message, with no operation: `GenServer.cast({Crdt.Replic
 
 ## 6. Network
 
-*Covers: REQ1, REQ12, REQ14, REQ15, CON2, CON3.*
+*Covers: REQ1, REQ12, REQ14, REQ15, REQ22, REQ23, CON2, CON3.*
 
 - **Erlang distribution.** Each node starts with `--name` and `--cookie`. On Nerves the firmware gives them at run time (DES15). The cookie is a shared key: only nodes with the same cookie connect. The cookie is `cpd2026`, agreed with the other teams so we can test with each other. With a shared cookie, nodes of other teams can connect to ours and then receive our operations, like any connected node (DES14). (OUR.)
 - **Node names:** `<hostname>@<IPv4>`, always with the IPv4, never `.local`. (OUR.)
@@ -328,23 +344,24 @@ There is also a control message, with no operation: `GenServer.cast({Crdt.Replic
   - **Node table** (optional): a text file with one node name per line; lines that start with `#` are comments. Each line is cleaned with `String.trim/1`, because of Windows CRLF line endings. The file is chosen with the `NODES_FILE` environment variable; without it the table is empty. `nodes.example.txt` is an example. The same file works on every machine; each node skips itself. It is for nodes that discovery cannot reach (multicast blocked, another network).
   - **Erlang connects the rest:** when two nodes connect, each one also connects to the nodes the other already knows (`global`, on by default). So if another node has my IP in its table, my node takes part with no change on my side.
 - **Connection to the table:** at start (last step of the start order of DES4.4) and then every 2 seconds, `Crdt.Replica` spawns a separate, short-lived process (`spawn/1`) for each node of the table that is not in `Node.list()`. That process only calls `Node.connect/1` and does not touch the replica's state. If it connects, the `{:nodeup, n}` notice reaches the replica's mailbox like any other message. Why it is not done inside the replica: DES7.1. (OUR.)
-- **Trust:** the messages of connected nodes are trusted; a malformed one crashes the replica, which restarts from its file (DES4.5). (OUR.)
+- **Trust:** a connected node is trusted with the cookie (DES14), but its messages are checked: a malformed or unknown message is dropped with a notice and the replica keeps running (DES5.1, REQ23). Before, a malformed message crashed the replica: it restarted from its file and lost its buffer, and more than 3 crashes in 5 seconds stopped the `crdt` application (on Nerves, `CrdtFw.NodeSupervisor`, DES15). (OUR.)
+- **Partitions:** every node starts with `-kernel prevent_overlapping_partitions false`. With the OTP default (`true`), when one link drops, `global` may also cut the node's links to the other nodes, and the node stays alone until discovery or the table reconnects it. The OTP documentation of `global` advises against turning it off, because `global` names and locks, and applications such as `mnesia`, need a fully connected network; nothing here uses global names, locks or `mnesia`, so there is nothing to protect. The start scripts set it in `ERL_AFLAGS` (DES11), and the firmware in `vm.args.eex` (DES15). `net_ticktime` stays at the OTP default (60 s) on every node: nodes with different values drop each other when idle. Both rules are those of the other implementation we interoperate with (REQ22). (OUR.)
 - **Up and down:** with `:net_kernel.monitor_nodes(true)`, the node receives `{:nodeup, n}` and `{:nodedown, n}` for every visible node. With `:nodeup`, it resends its history (DES4.4). With `:nodedown`, it only reports it in the console.
 - **Broadcast:** send the message to each node in `Node.list()`. A node without a process `Crdt.Replica` (for example a remote console started without `--hidden`) drops the cast silently.
-- **Ports:** Erlang uses 4369 (EPMD) and one distribution port per node. The start scripts fix the distribution ports to the range 4218 to 4228 with `ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228"`, so a firewall needs fixed rules only: TCP 4369, TCP 4218 to 4228 and UDP 45892 (discovery). (OUR.)
+- **Ports:** Erlang uses 4369 (EPMD) and one distribution port per node. The start scripts fix the distribution ports to the range 4218 to 4228 with `ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228 prevent_overlapping_partitions false"` (the last flag: "Partitions", above), so a firewall needs fixed rules only: TCP 4369, TCP 4218 to 4228 and UDP 45892 (discovery). (OUR.)
 - If the node is started without `--name`, the application does not start `Crdt.Replica` or `Crdt.Discovery` and shows a clear message with the right command, but it does not fail either. The message has two commands: the PowerShell one and the macOS and Linux one (DES11). (OUR.) The `Crdt` functions return `{:error, :no_replica}` (DES9). So `mix test`, which runs without `--name`, keeps working.
 - **Invalid configuration (general rule):** if the configuration is not valid, the replica does not start, the console says what to fix, and the virtual machine and IEx stay alive; the `Crdt` functions return `{:error, :no_replica}`. Same as without `--name`. Cases: no `--name` (above); `NODES_FILE` points to a file that does not exist or cannot be read (`init` prints the file name and what to do, fix `NODES_FILE` and restart the node, and returns `:ignore`); damaged history or a history file that cannot be read or opened (DES4.5). If the discovery socket cannot be opened, only discovery is missing: `Crdt.Discovery` prints why and returns `:ignore`, and the replica and the table keep working (DES6.1). (OUR.)
 
 ### 6.1 Discovery
 
-*Covers: REQ14.*
+*Covers: REQ14, REQ23.*
 
 - `Crdt.Discovery` is a small GenServer, started by the application after `Crdt.Replica` on a named node, unless the environment variable `DISCOVERY` is `off`. (OUR.)
 - **Announcement:** every 2 seconds, starting at once, it sends one UDP packet with the text `crdt-treedoc-1 <node name>` (for example `crdt-treedoc-1 pi-pe@172.20.10.4`) to the multicast group 233.252.1.32, port 45892, with TTL 1 (it does not leave the local network) and loop on (other nodes of the same machine hear it). The multicast interface is the IP of the node name (`127.0.0.1` locally, the Wi-Fi IP on a network); if the host part is not an IPv4, the system default.
 - **Listening:** the socket binds port 45892 and joins the group on that interface. Only one socket per machine can bind the port (sharing it needs socket options that differ per OS). If the port is busy, for example because another node of the same machine has it, the node opens a socket on a free port and only announces: the listener of its machine, or of another machine, hears it and connects, and Erlang connects the rest (DES6).
 - **On a packet:** if it starts with the tag `crdt-treedoc-1 `, the rest is a node name. The node remembers it as "announced" (for `Crdt.status()`). If the name is not its own and is not in `Node.list()`, it spawns a short-lived process that calls `Node.connect/1`, the same rule as DES7.1. A packet without the tag, its own announcement, or a node already connected open no connection. So two connected nodes do not reconnect every 2 seconds.
 - **Failure:** if the socket cannot be opened at all, it prints `discovery off: cannot open UDP port 45892 (<reason>). Use a node table (NODES_FILE).` and returns `:ignore`. A failed send (for example, the Wi-Fi is down for a moment) is ignored; the next announcement tries again.
-- The name in a packet becomes an atom only after the tag check. On our own network that is enough (DES14).
+- The name in a packet becomes an atom only after the tag check, and only if it can be one: at most 255 bytes and valid UTF-8 (`parse/1`). Any other packet is ignored like one without the tag, so a packet never crashes `Crdt.Discovery` (it shares `Crdt.Supervisor` with `Crdt.Replica`, REQ23). On our own network that is enough (DES14). (OUR.)
 - If multicast is filtered by the network, `scripts/multicast_check.exs` shows it (NETWORK.md), and a node table is the way out.
 
 ---
@@ -375,18 +392,18 @@ There is also a control message, with no operation: `GenServer.cast({Crdt.Replic
 
 | Module | Responsibility | Has effects (network, file) | Budget (lines) |
 |---|---|---|---|
-| `Crdt` | API to use from IEx: edit, `text`, `status`, `history` and `debug` | No (calls `Crdt.Replica`) | 60 |
+| `Crdt` | API to use from IEx: edit, `text`, `status`, `history` (it keeps the last 10 lines for `history/0`) and `debug` | No (calls `Crdt.Replica`) | 60 |
 | `Crdt.Application` | Starts the supervisor and checks that the node has a name; starts discovery unless `DISCOVERY=off` | Yes | 25 |
-| `Crdt.Treedoc` | The CRDT: `new`, `prepare`, `effect`, `value`, `compare`, `debug_rows` | No | 90 |
-| `Crdt.Causal` | Causal delivery rules: duplicate, deliverable, check the buffer, what is missing (`missing/2`, for `status` and the "waiting" notice) | No | 70 |
+| `Crdt.Treedoc` | The CRDT: `new`, `prepare`, `effect`, `value`, `compare`, `debug_rows`, and `valid_op?` (the `op`, `pos` and `ch` of a received message, DES5.1) | No | 90 |
+| `Crdt.Causal` | Causal delivery rules: duplicate, deliverable, check the buffer, what is missing (`missing/2`, for `status` and the "waiting" notice), and `valid_clock?` (the `from` and `vc` of a received message, DES5.1) | No | 70 |
 | `Crdt.LogFormat` | Conversion of messages to JSON and back | No | 40 |
 | `Crdt.Config` | Read the optional node table | Reads a file | 20 |
-| `Crdt.Discovery` | Announce the node and connect to the nodes heard on the local network (DES6.1) | Yes (UDP) | 60 |
-| `Crdt.Replica` | GenServer: joins everything, handles network, file and console | Yes | 250 |
-| `CrdtFw` (in `firmware/`, only on Nerves, DES15) | Starts the node on Nerves: waits for the IPv4, starts the distribution, then the replica and discovery under its own supervisor | Yes | 80 (not counted with `lib/`) |
+| `Crdt.Discovery` | Announce the node and connect to the nodes heard on the local network; ignore a name that cannot be an atom (DES6.1) | Yes (UDP) | 60 |
+| `Crdt.Replica` | GenServer: joins everything, handles network, file and console | Yes | 265 |
+| `CrdtFw` (in `firmware/`, only on Nerves, DES15) | Starts the node on Nerves: waits for the IPv4, starts the distribution, then the replica and discovery under its own supervisor | Yes | 85 (not counted with `lib/`) |
 | `CrdtFw.Application` (in `firmware/`, only on Nerves, DES15) | Starts `CrdtFw.Supervisor` with `CrdtFw` | No | 15 (not counted with `lib/`) |
 
-The budget counts physical lines that are not empty, are not comments and do not belong to `@moduledoc` or `@doc`. It is a reference cap, not a goal. `CrdtFw` and `CrdtFw.Application` are not in `lib/`: they are outside the budget of `lib/` and have their own (DES15). `CrdtFw` has 80: DES15 has seven steps, and each one that can fail gives its own message instead of a crash (DES6), in one process with one job (CON5).
+The budget counts physical lines that are not empty, are not comments and do not belong to `@moduledoc` or `@doc`. It is a reference cap, not a goal. `CrdtFw` and `CrdtFw.Application` are not in `lib/`: they are outside the budget of `lib/` and have their own (DES15). `CrdtFw` has 85: DES15 has seven steps, and each one that can fail gives its own message instead of a crash (DES6), in one process with one job (CON5); step 7 also waits at most 10 s for each old process, so a stuck one shows on the HDMI console instead of hanging the start (DES15). Trimming to a lower cap would make the steps harder to read. `Crdt.Replica` has 265: REQ23 adds the check of DES5.1, the key filter and a clause for each unknown call, cast and plain message (about 14 lines), and the rest leaves room for fixes found by the tests.
 
 `Crdt.Treedoc`, `Crdt.Causal` and `Crdt.LogFormat` are pure functions: they are tested with tests without network.
 
@@ -425,7 +442,7 @@ Crdt.debug()                  # each character with its PosID and whether it is 
 - With an empty text or `count` 0 and a valid index, they answer as a successful edit, without generating operations.
 - If the replica is not running (because `--name` is missing, because the table file cannot be read, DES6, or because the history is damaged or cannot be read or opened, DES4.5), every `Crdt` function returns `{:error, :no_replica}`.
 - `Crdt.status()` shows the node, the table file (`none` without `NODES_FILE`), the nodes of the table (without the node itself), the state of discovery (line `discovery: listening on 45892`, `discovery: announce only` or `discovery: off`), every connected node (line `connected: ...`: those of `Node.list()`, the same set as the broadcast, DES6, each followed by how it was found: `(table)` if it is in the table, `(announced)` if discovery heard it, `(other)` otherwise, for example connected by another node; `none` if there are none; OUR.), the clock, the size of the history and each waiting operation with what it is missing, in the format of the "waiting" notice (below). It also shows the path of the history file, in a line `history file: ...`, so it is not confused with the table file (`nodes file: ...`). (OUR.) This is how it meets REQ17 for the buffer.
-- `Crdt.history()` shows the last 10 applied operations, one per line (`op 3 from crdt1@127.0.0.1: ins "a"`), after `... N earlier ops` if there are more. `Crdt.history(:all)` shows them all, in the order in which they were applied. This is how it meets REQ17 for the history. (OUR.)
+- `Crdt.history()` shows the last 10 applied operations, one per line (`op 3 from crdt1@127.0.0.1: ins "a"`), after `... N earlier ops` if there are more. `Crdt.history(:all)` shows them all, in the order in which they were applied. The replica always answers with every line; `Crdt` keeps the last 10 for `history/0`. This is how it meets REQ17 for the history. (OUR.)
 - A delete is shown with the deleted character: `op 4 from crdt1@127.0.0.1: del "a"`, both in `history` and in the "applied" notice. The character is taken from the document: the tombstone keeps it (DES3.5), and causal delivery guarantees that the insert was applied before the delete (DES4.2). (OUR.)
 - `status`, `history` and `debug` ask the replica for the data with a `GenServer.call` and print in the calling process. So the output appears in the console where the command was typed, also if it is a remote console (`--remsh`, DES13). They return `:ok`, or `{:error, :no_replica}` if the replica is not running. The tests capture the output with `ExUnit.CaptureIO`. (OUR.)
 - The replica's notices (list below) are printed by the replica, so they appear in the node's console.
@@ -439,6 +456,7 @@ Console messages, always with the node name at the start:
 - `[crdt2@127.0.0.1] connected crdt3@127.0.0.1: resending history (12 ops)`
 - `[crdt2@127.0.0.1] disconnected crdt3@127.0.0.1`
 - `[crdt2@127.0.0.1] hello from crdt3@127.0.0.1: resending history (12 ops)`
+- `[crdt2@127.0.0.1] malformed message dropped: {:remote, %{}}` (any message dropped by DES5.1, shown with `inspect/2`, `limit: 5` and `printable_limit: 40`, so a large term, long strings included, prints one short line; REQ23. OUR)
 - `[crdt2@127.0.0.1] cannot read nodes file nodes.txt (no such file or directory): replica not started. Fix NODES_FILE and restart the node.`
 - `[crdt2@127.0.0.1] history loaded: 12 ops` (always when loading ends, also with 0 ops. It comes before the network notices, such as "connected" or "hello from", and it is not printed if the replica does not start. OUR)
 - `[crdt2@127.0.0.1] cannot open history file data/crdt2.jsonl (no such file or directory): replica not started. Check that the folder exists and restart the node.`
@@ -480,13 +498,15 @@ docs/MANUAL-TESTS.md                    (manual test guide with three terminals)
 docs/NETWORK.md                         (several computers on the same network)
 docs/CODE-MAP.md                        (guide to study the code)
 docs/INTEGRATION.md                     (contract for another team: join the cluster, discovery, our operation protocol)
+teams/README.md                         (other teams' implementations: our code for each rule, the index, how to add one)
+teams/<name>.md                         (one team: credit, its side of each layer, differences, how to run it, results)
 firmware/mix.exs                        (Nerves firmware project, target rpi4; depends on :crdt with path: ".." and runtime: false, DES15)
 firmware/mix.lock                       (versions of Nerves and its dependencies, written by the first build)
 firmware/.formatter.exs                 (mix format in firmware/; plain inputs, no import_deps)
 firmware/config/config.exs              (common configuration; imports host.exs or target.exs)
 firmware/config/host.exs                (configuration on the computer)
 firmware/config/target.exs              (Wi-Fi, SSH keys and node table, read from environment variables at build time)
-firmware/rel/vm.args.eex                (VM flags; no distribution lines, DES15)
+firmware/rel/vm.args.eex                (VM flags; no name, cookie or port lines, DES15)
 firmware/lib/crdt_fw/application.ex     (the firmware application, :temporary, and CrdtFw.Supervisor)
 firmware/lib/crdt_fw.ex                 (CrdtFw: start order of DES15 and CrdtFw.NodeSupervisor)
 ```
@@ -495,7 +515,7 @@ firmware/lib/crdt_fw.ex                 (CrdtFw: start order of DES15 and CrdtFw
 
 ## 11. Start scripts and running locally
 
-*Covers: CON3.*
+*Covers: CON3, REQ22.*
 
 - One start command per machine: `scripts/start.ps1` on Windows (PowerShell) and `scripts/start.sh` on macOS and Linux (also the Pi). (OUR.) A Pi with Nerves has no start script: the firmware does the same steps (DES15).
 - What the script does, in order:
@@ -503,7 +523,7 @@ firmware/lib/crdt_fw.ex                 (CrdtFw: start order of DES15 and CrdtFw
   2. IP: the IPv4 of the Wi-Fi, by the rule below, unless an IP is given (`-Ip` / `--ip`, or `CRDT_IP`).
   3. It prints the node name, the IP and the interface.
   4. `mix compile`.
-  5. It sets `ERL_AFLAGS` with the distribution port range 4218 to 4228 (DES6) and runs `iex --name <name>@<IP> --cookie cpd2026 -S mix` (`iex.bat` on Windows: plain `iex` is another Windows command). The environment variables `NODES_FILE` and `DISCOVERY` reach the node as they are.
+  5. It sets `ERL_AFLAGS` with the distribution port range 4218 to 4228 and `prevent_overlapping_partitions false` (DES6, "Ports" and "Partitions") and runs `iex --name <name>@<IP> --cookie cpd2026 -S mix` (`iex.bat` on Windows: plain `iex` is another Windows command). The environment variables `NODES_FILE` and `DISCOVERY` reach the node as they are.
 - Rule to pick the IP (the multicast interface is the same, DES6.1):
   - Windows: the default IPv4 routes (`0.0.0.0/0`) whose adapter is physical and up (`Get-NetAdapter -Physical`), so Hyper-V `vEthernet` adapters and VPNs are skipped. Among them, the Wi-Fi one (802.11); if there is no Wi-Fi one, the only one left. Its IPv4, skipping `169.254.*`.
   - macOS: the interface of `route -n get default`, if it is not a VPN tunnel (`utun*`, `ppp*`); its IPv4 with `ipconfig getifaddr`.
@@ -535,6 +555,7 @@ The `mix test --cover` threshold is 0 (`test_coverage` in `mix.exs`) because the
 - `Crdt.Replica` without network: an invalid index does not change the clock, and `insert` of several characters leaves the text together.
 - With real nodes: `test/crdt_distributed_test.exs` starts nodes with `:peer` (OTP 25 or later) on the same computer. It carries `@tag :distributed`, is excluded by default (`test/test_helper.exs`) and runs with `mix test --include distributed`. It checks the forwarding of what leaves the buffer, that a connected node outside any table receives the operations, the history on `:nodeup` and `hello` from any node, that an unreachable node in the table does not block `Crdt.insert`, that the history loaded from the file is sent only once to a node already connected, discovery (two nodes with no table find each other; an announcement connects, its own announcement and a packet without the tag do not; a busy port gives announce only), and the file order (DES4.5): in a local call, a single `:file.sync/1` and then the sends; in a remote operation, sync, "applied" notice and forwarding. (OUR.)
 - `Crdt` without a running replica returns `{:error, :no_replica}`.
+- Received messages (DES5.1, REQ23): `Crdt.Treedoc.valid_op?/1` and `Crdt.Causal.valid_clock?/1` accept the messages our replicas produce and reject each broken rule one by one. A replica without network gets many malformed and unknown terms (fixed list plus random terms made with `:rand` and a fixed seed) as `{:remote, term}` casts, other casts, plain messages and calls: same process, same text, clock, history and file, the "malformed message dropped" notice is printed for each term of the fixed list (so a term that the old code would drop as a duplicate, such as `vc[from] = 0`, still shows that its check ran; the list includes `from: nil` with `vc: %{nil => 1}`, which the old code applied), an unknown call answers `{:error, :unknown}`, `{:insert, 0, 123}` is an unknown call, `{:hello, %{}}` prints the notice and resends no history, and a valid op sent after them is applied. A valid op with an extra key is applied and kept without it: the test reads the in-memory history with `:sys.get_state/1` (the file never shows extra keys, DES5.2), and the distributed test receives the forwarded op on a `:peer` node. `Crdt.Discovery.parse/1` returns `:ignore` for a tagged name of 256 bytes and for one that is not valid UTF-8. An insert of the shape the other implementation sends for several characters (a PosID through a step whose `seq` is higher than the op's own) is applied in the right place (REQ22). With real nodes, a `:peer` node casts malformed terms to another: it stays up and keeps editing. (OUR.)
 - `firmware/` and `CrdtFw` are not part of `mix test`: they need the Nerves target. `MIX_TARGET=rpi4 mix firmware` must build with no warnings, and `CrdtFw` is tested by hand on the Pi (MAN14, MAN15). `lib/` does not change for Nerves, so its tests cover it. (OUR.)
 - `Crdt.status()` includes the waiting operations with what they are missing; `Crdt.history()` shows the last 10 (with `... N earlier ops` if there are more) and `Crdt.history(:all)` all of them, in order.
 - Loading a history: with the last line cut in half, the others are loaded; then a new operation is written and the history loads again with no errors. With a damaged line in the middle, `start_link/1` returns `:ignore`.
@@ -579,31 +600,34 @@ The `mix test --cover` threshold is 0 (`test_coverage` in `mix.exs`) because the
 - **The cookie gives full access to the nodes.** On our own network it is not a problem.
 - **Discovery only reaches the local network.** Multicast does not cross routers (TTL 1), and some networks filter it (lab Wi-Fi, client isolation). Then a node table is needed; with `name@IP` in the table, it must be edited when the network changes the IPs (DES6).
 - **One discovery listener per machine.** If the node that listens on a machine halts, the other nodes of that machine only announce until one of them restarts. They stay connected to each other, and the listeners of other machines still hear them (DES6.1).
-- **Any connected node receives our operations.** Membership is `Node.list()`: a node of another team with the same cookie, or a remote console started without `--hidden`, receives every cast. Without a process `Crdt.Replica` the cast is dropped; a foreign `Crdt.Replica` that sends another format makes ours crash and restart from its file (INTEGRATION.md).
-- **Names from announcements become atoms.** A packet with our tag creates an atom with the name it carries. On our own network that is not a problem.
+- **Any connected node receives our operations.** Membership is `Node.list()`: a node of another team with the same cookie, or a remote console started without `--hidden`, receives every cast. Without a process `Crdt.Replica` the cast is dropped; a foreign `Crdt.Replica` that sends another format gets its messages dropped, each with a notice (DES5.1, INTEGRATION.md). A node that keeps sending malformed messages fills the console with notices and makes the replica slower while it lasts: each notice waits for the console, and valid ops wait behind it in the mailbox. The replica does not crash.
+- **The buffer has no limit.** A valid op whose clock asks for ops that never come waits in the buffer forever, and each new op checks the whole buffer again (DES4.2). A node that sends many of them uses memory and slows the replica. The other implementation keeps at most 50 000; we keep the rule of DES4.2.
+- **Other processes trust connected nodes.** `Crdt.Discovery` and, on Nerves, `CrdtFw` have no clause for unknown calls or casts (and `Crdt.Discovery` none for unknown plain messages): a connected node that sends them one crashes that process, and its supervisor restarts it (on Nerves, a crash of `CrdtFw` also restarts the replica, DES15). Only a node with the cookie can send them (DES6, "Trust"); a UDP packet cannot (DES6.1).
+- **A grapheme may be split differently on another Elixir.** Each Elixir version follows its own Unicode version to split text into graphemes (`String.graphemes/1`, DES3.5). An insert whose `ch` one version takes as one grapheme and a newer or older one splits in two is dropped by the node that splits it (DES5.1), and every later op of that origin waits there for it. Our Pis with Raspberry Pi OS run Elixir 1.18.3; other nodes may run 1.20. Plain letters, accents and common emoji are one grapheme on both; long emoji sequences were not tested, and no interoperation test (MAN16 to MAN18) has a node with Elixir 1.18.3, so this limitation is untested.
+- **Names from announcements become atoms.** A packet with our tag creates an atom with the name it carries, if the name can be one (at most 255 bytes, valid UTF-8, DES6.1). On our own network that is not a problem.
 - **Reconnection may be slow.** Once, on a home Wi-Fi, a restarted node reconnected after about 30 s (observed, not measured); on a phone hotspot it was immediate.
 - **Node names are public inside the cluster.** The node name is announced to every node and stored in every op and history file. On a corporate computer, start with a neutral name (`-Name` / `--name`, DES11).
 - **The clock grows with each new IP.** Each name `<hostname>@<IP>` that a machine used keeps its entry in the clock and in the PosIDs (DES4.5), so one machine used on two networks shows as two authors. It does not affect convergence; for a demo it does not matter.
 - **On Nerves, a new IP needs a restart.** The node name is fixed when the firmware starts the node (DES15). If the Pi gets another IP, it is restarted: the history file does not depend on the IP (REQ13), and the clock grows with the new name (above).
-- **On Nerves, burning the SD card again deletes `/data`.** A firmware update over the network keeps `/data`; burning the card again clears it, which is the same as deleting the history of that node (below).
+- **On Nerves, burning the SD card again deletes `/data`.** A firmware update over the network keeps `/data`; burning the card again clears it, which is the same as deleting the history of that node (below). The Pi keeps its name (the Nerves hostname comes from the board, and the same network usually gives the same IP), so the other nodes may still hold its old ops. The simplest way out, used before MAN17: stop every node and delete every node's history at once, so no node holds old ops (DES11, "To start from scratch"; `MANUAL-TESTS.md`, MAN17).
 - **On Nerves, a crash loop at boot reboots the Pi.** If `crdt_fw` is not running when the startup guard checks at boot, the guard reboots the Pi after 15 minutes (DES15). Without the loop, a stopped `crdt_fw` leaves the Pi on, as with systemd (DES13).
 - **On Nerves, the notices are not seen over SSH.** The replica's notices go to the Pi's console (HDMI screen); an SSH session shows only what its commands print (`Crdt.status()`, `Crdt.history()`, `Crdt.debug()`, DES9).
 - **A combining accent inserted alone takes its own position.** It joins the previous character into one grapheme (for example `"e"` and then `"́"` look like `"é"`), but it still takes its own position: indices count stored positions, not graphemes of the visible text. It does not happen when typing normally, because the keyboard produces precomposed characters such as `"é"`.
-- **Deleting the history of a single node.** If `data/<node>.jsonl` of a single node is deleted (for example, because it was damaged, DES4.5), the node starts with its clock at 0 and the others resend everything to it. If someone edits on that node before it catches up, its new operations repeat sequence numbers, the others drop them as duplicates and the texts diverge. Rule: do not edit on that node until its text is the same as the others'.
+- **Deleting the history of a single node.** If `data/<node>.jsonl` of a single node is deleted (for example, because it was damaged, DES4.5), the node starts with its clock at 0 and the others resend everything to it. If someone edits on that node before it catches up, its new operations repeat sequence numbers, the others drop them as duplicates and the texts diverge. Rule: do not edit on that node until its own entry in the clock (`Crdt.status()`, line `clock:`) is the same as on a node that holds its old ops. The same text is not enough: it does not show whether a node with those ops was connected.
 - **Repeated notices on reconnection.** With each `:nodeup` and each `hello`, every node resends its whole history by broadcast (REQ15, DES4.4), and each repeated copy prints "duplicate dropped" (and an operation that is already waiting prints "waiting" again). With 3 nodes and 200 characters (MAN8), one reconnection can print hundreds of lines. It is not an error.
 
 ---
 
 ## 15. Raspberry Pi with Nerves
 
-*Covers: REQ21, CON1, CON3, REQ13, REQ14.*
+*Covers: REQ21, CON1, CON3, REQ13, REQ14, REQ22.*
 
 A Raspberry Pi 4 can run the node with Nerves firmware instead of Raspberry Pi OS: firmware written to the SD card, with no shell and no start script. `lib/` does not change. (ASG for the Raspberry Pi, OUR for Nerves.)
 
 - **Target and versions.** `MIX_TARGET=rpi4`, with the official system `nerves_system_rpi4` 2.2 (Erlang/OTP 29.1.2). The computer that builds the firmware has the same Erlang/OTP and an Elixir that supports it (1.20, `-otp-29`). `lib/` keeps CON1: it still compiles with Elixir 1.18.3 and OTP 27 on Raspberry Pi OS. (OUR.)
 - **Project.** `firmware/` is a separate Mix project next to `lib/` (a "poncho" project) that depends on `{:crdt, path: "..", runtime: false}` and on Nerves. Only `firmware/` has external dependencies (CON1). (OUR.)
 - **Release.** In the release of `firmware/`, `applications: [crdt: :load, crdt_fw: :temporary]`. `:crdt` is only loaded (`:load`): its modules are there but `Crdt.Application` does not run, because on Nerves the node has no name when the applications start (DES6). The firmware application `crdt_fw` is `:temporary`: if it stops, the virtual machine stays alive and the Pi does not reboot, as with systemd (DES13). Exception: the startup guard of `nerves_runtime` (`startup_guard_enabled: true`), which validates a new firmware once every application has started (for example after `mix upload`), reboots the Pi after 15 minutes if `crdt_fw` is not running when it checks at boot, for example because it stopped in a crash loop. Mix refuses a release where an app started as `:temporary` depends on an app in `:load`, so `runtime: false` keeps `:crdt` out of the applications of `crdt_fw`; the release still includes it because it is listed. (OUR.)
-- **`vm.args.eex`** is the one of the Nerves template, with no distribution lines: the name, the cookie and the ports are given at run time (below). (OUR.)
+- **`vm.args.eex`** is the one of the Nerves template, with no name, cookie or port lines: those are given at run time (below). It adds one line, `-kernel prevent_overlapping_partitions false` (DES6, "Partitions"). That flag goes in `vm.args.eex` and not in `CrdtFw` with `Application.put_env/3`, because `global` starts with `kernel` at boot, before `CrdtFw`, and reads the parameter once, in its `init/1` (OTP 29, `global.erl`; `kernel_app`, `prevent_overlapping_partitions`). (OUR.)
 - **Processes.** `CrdtFw.Application` starts the supervisor `CrdtFw.Supervisor` (`one_for_one`) with one child, `CrdtFw`, a GenServer. `CrdtFw` starts its own supervisor, registered as `CrdtFw.NodeSupervisor` (`one_for_one`, with `Supervisor.start_link/2`, so it is linked to `CrdtFw`), for `Crdt.Replica` and `Crdt.Discovery`. (OUR.)
 - **Start order of `CrdtFw`.** `init/1` only returns `{:ok, state, {:continue, :start}}`; the steps run after it, in `handle_continue/2`, so `CrdtFw.Supervisor` is not blocked while `CrdtFw` waits for the network. In order (OUR):
   1. Waits for an IPv4 on `wlan0`: it reads it from `vintage_net` and subscribes to its changes (`VintageNet.subscribe/1`) until there is one. Meanwhile it prints `waiting for an IPv4 on wlan0`, so the HDMI screen shows why the node has not started.

@@ -58,6 +58,27 @@ defmodule Crdt.Treedoc do
         do: {state.chars[pos], pos, MapSet.member?(state.dead, pos)}
   end
 
+  @doc """
+  True if the `op`, `pos` and `ch` of a received `msg` follow DES5.1 (REQ23); the same rules as the
+  other implementation (REQ22), except one: a step whose node is `nil`, `true` or `false` is dropped.
+  """
+  def valid_op?(%{op: :ins, pos: [_ | _] = pos, ch: ch}), do: steps?(pos) and grapheme?(ch)
+  def valid_op?(%{op: :del, pos: [_ | _] = pos}), do: steps?(pos)
+  def valid_op?(_), do: false
+
+  # DES5.1: every step {0 or 1, seq >= 1, node atom}; recursion, so an improper list is false
+  defp steps?([]), do: true
+
+  defp steps?([{bit, seq, node} | rest])
+       when bit in [0, 1] and is_integer(seq) and seq >= 1 and is_atom(node) and
+              node not in [nil, true, false],
+       do: steps?(rest)
+
+  defp steps?(_), do: false
+
+  # DES5.1: exactly one valid grapheme, as String.graphemes/1 gives it (DES3.5)
+  defp grapheme?(ch), do: is_binary(ch) and String.valid?(ch) and String.first(ch) == ch
+
   # REQ8, DES3.4: left child of the right neighbour, or right child of the left one.
   # Replaces Algorithm 1: a fresh PosID in between is enough (density PAP2.1, insert PAP2.2).
   defp new_pos(left, right, seq, node) do

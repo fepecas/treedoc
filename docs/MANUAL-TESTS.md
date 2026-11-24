@@ -91,6 +91,7 @@ The words used in this guide and in the other documents:
 | [With network (two or three computers)](#with-network-two-or-three-computers) | One node per computer: the start script, the clocks, which cases apply |
 | [Between computers: tests run](#between-computers-tests-run-man9-to-man13) | MAN9 to MAN13: two computers, a computer and a Pi, three operating systems |
 | [A Pi 4 with Nerves](#a-pi-4-with-nerves-man14-and-man15) | MAN14 (passed) and MAN15 (pending): a Pi with Nerves firmware and a Mac |
+| [Interoperation](#interoperation-man16-to-man18) | MAN16 and MAN17 (passed), MAN18 (pending): our node with another team's implementation, on computers, with our Pi, and Pi to Pi |
 | [Network case](#network-case-edit-while-disconnected) | Edit while disconnected, then converge (no clock needed) |
 
 ## Before you start
@@ -646,6 +647,14 @@ several bytes; `🙂` is one position. To read the history file with
 `Get-Content` in Windows PowerShell, add `-Encoding UTF8`; without it
 `ñ` shows as `Ã±` (the file is fine). On macOS and Linux,
 `cat data/crdt3.jsonl` shows it right.
+
+**Between Elixir versions:** each Elixir follows its own Unicode version
+to split text into graphemes. A character that one version takes as
+one grapheme and another splits in two is dropped by the node that
+splits it, and the later ops of its author wait there (`DESIGN.md`
+DES14). Letters, accents and common emoji such as `🙂` are one grapheme
+on Elixir 1.18 and 1.20; long emoji sequences were not tested, and no
+interoperation test has a node with Elixir 1.18.
 
 ## Case 8: invalid input changes nothing
 
@@ -2409,3 +2418,178 @@ text (REQ21, REQ13).
    and restart.
 
 **Result:** pending. Not run yet.
+
+## Interoperation (MAN16 to MAN18)
+
+Our node edits one document with another team's implementation that
+follows our protocol (REQ22, `INTEGRATION.md`, L3), with no change on
+either side. A malformed or unknown message is dropped with a notice
+(REQ23). Every node is started with an explicit name, never the
+computer's host name, and with `prevent_overlapping_partitions false`
+(`DESIGN.md` DES6, "Partitions").
+
+### Start the nodes
+
+One computer, or two if the other implementation does not build on one
+of them. Each team's file in [teams/](../teams/README.md) says where
+its node runs and how to start it.
+
+1. Our node on Windows, in its own PowerShell window. `-Ip <IPv4>` is
+   optional: without it the script finds the Wi-Fi IPv4 and prints it
+   (`node: win-a@<IPv4> (interface: Wi-Fi)`).
+
+   ```powershell
+   cd <project folder>
+   .\scripts\start.ps1 -Name win-a
+   ```
+
+2. The other implementation, from its own folder, with its own start
+   command, the cookie `cpd2026`, the ports 4218 to 4228 and
+   `prevent_overlapping_partitions false`, named with the IPv4 of its
+   computer.
+
+3. If `Node.list()` on win-a does not show the other node after a few
+   seconds (multicast blocked, or two discovery sockets on one
+   computer, `DESIGN.md` DES6.1):
+
+   ```elixir
+   Node.connect(:"<other node name>")
+   ```
+
+### MAN16: our node and another implementation on computers
+
+**Goal:** REQ22 and REQ23 between two implementations (REQ5, REQ6,
+REQ7, REQ8, REQ12, REQ14).
+
+**Steps**
+
+1. On win-a: `:application.get_env(:kernel, :prevent_overlapping_partitions)`.
+2. MAN1: insert on one node, then on the other; `Crdt.text()` on win-a
+   and the text command of the other node.
+3. MAN2: two words of several characters, at the same place and at
+   different places, at the same time. On one computer, the 10-second
+   command of "The clocks and the 10-second command". On two, edit
+   while one is disconnected ("Network case: edit while
+   disconnected").
+4. MAN3: delete on each side.
+5. Case 7: `"ñandú 🙂 "` from each side.
+6. MAN4: stop the other node, edit on win-a, start it again with the
+   same name: it catches up.
+7. A third node, hidden and without our code:
+
+   ```powershell
+   cd <project folder>
+   iex.bat --name probe@<Windows IPv4> --cookie cpd2026 --hidden
+   ```
+
+   In its IEx:
+
+   ```elixir
+   Node.connect(:"win-a@<Windows IPv4>")
+   r = {Crdt.Replica, :"win-a@<Windows IPv4>"}
+   GenServer.cast(r, {:remote, %{}})
+   GenServer.cast(r, {:remote, %{op: :ins, from: :probe, vc: %{probe: 1}, pos: [{1, 1, nil}], ch: "a"}})
+   GenServer.cast(r, {:remote, %{op: :del, from: :probe, vc: %{probe: 0}, pos: [{1, 1, :probe}]}})
+   GenServer.cast(r, {:hello, %{}})
+   GenServer.cast(r, :unknown)
+   send(r, :unknown)
+   GenServer.call(r, :unknown)
+   ```
+
+**Expected:** `{:ok, false}`; the same text on both nodes after each
+step; on win-a, one `malformed message dropped: ...` per line of the
+probe, the call returns `{:error, :unknown}`, and `Crdt.text()` and
+`Crdt.status()` (clock and history size) are as before.
+
+**Result (November 2026):** passed, with Case 7, MAN4 and the probe
+not run. win-a on Windows (Elixir
+1.20.4, OTP 29) and another team's node on macOS, on an iPhone
+hotspot; its project does not build on Windows. Details:
+[teams/carla.md](../teams/carla.md).
+
+- The two nodes found each other by discovery, with no
+  `Node.connect/1`.
+- Step 1 returned `{:ok, false}` on win-a.
+- Step 2 (MAN1) passed: `"hola mundo"` on both nodes.
+- Step 3 (MAN2, edits while the Mac was disconnected) passed: the
+  same text on both.
+- Step 4 (MAN3) passed: the same text on both after a delete.
+- Steps 5 (Case 7) and 6 (MAN4): not run.
+- Step 7 (the probe): not run. REQ23 is covered by the automated tests,
+  among them a distributed test where another node casts malformed
+  terms to our replica (`TESTS.md`, REQ23).
+
+### MAN17: with our Pi with Nerves
+
+**Goal:** REQ22 with our Pi (REQ21, REQ12).
+
+**Before:** burning a card keeps the Pi's name and clears its history,
+so other nodes may still hold its old ops (`DESIGN.md` DES14). Once
+every Pi has the new image: stop every node, and delete every node's
+history file at once, the other implementation's included; start
+nothing until every file is deleted.
+
+- Our computer (PowerShell): `System.halt()` in each node, then
+
+  ```powershell
+  cd <project folder>
+  Remove-Item data\*.jsonl
+  ```
+
+- The other implementation, on whichever computer its node ran: its
+  own history files, in its folder (its file in
+  [teams/](../teams/README.md) names them).
+- A Mac or Linux node of ours, if one ran:
+
+  ```sh
+  cd <project folder>
+  find data -name '*.jsonl' -delete
+  ```
+
+- Each Pi, over SSH, in its IEx:
+
+  ```elixir
+  Enum.each(Path.wildcard("/data/crdt/*.jsonl"), &File.rm!/1)
+  ```
+
+  ```elixir
+  Nerves.Runtime.poweroff()
+  ```
+
+**Steps**
+
+1. Power the Pi on; start win-a and the other node as above. Every
+   node shows an empty history.
+2. MAN1 and MAN3 from each of the three.
+3. MAN4: power the Pi off, edit on the other two, power it on.
+
+**Expected:** the same text on the three nodes; the Pi catches up.
+
+**Result (November 2026):** passed with our Pi and the other
+implementation; details in [teams/carla.md](../teams/carla.md).
+
+- Our Pi nerves-35f1 with the new image and the other implementation's
+  node on macOS, on an iPhone hotspot, after the history reset above.
+  Our computer was not a node in this run.
+- The other node found the Pi by discovery, with no `Node.connect/1`.
+- On the Pi, `:application.get_env(:kernel, :prevent_overlapping_partitions)`
+  returned `{:ok, false}`.
+- MAN1: `"hola pi"` on both. MAN3: `"la pi"` on both.
+- MAN4: not run.
+
+### MAN18: Pi to Pi
+
+**Goal:** REQ22 with no computer as a node (REQ21, REQ12).
+
+**Steps**
+
+1. Our Pi with Nerves and the Pis of other teams on the same network (a
+   router or a phone hotspot; the lab router broadcasts the network of
+   the test hotspot, so our image joins it with no change). A computer
+   may only open an SSH console.
+2. MAN1 and MAN3 from our Pi and from one Pi of another team.
+3. MAN4: power our Pi off and on.
+
+**Expected:** every Pi ends with the same text.
+
+**Result:** pending.

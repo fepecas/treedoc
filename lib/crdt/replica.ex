@@ -11,6 +11,8 @@ defmodule Crdt.Replica do
   alias Crdt.Treedoc
 
   @connect_every 2_000
+  # DES5.1: the keys of the format; any other key is removed (REQ23)
+  @keys [:op, :from, :vc, :pos]
 
   @doc "Options: `:me`, `:nodes`, `:data_dir` and `:name` (docs/DESIGN.md DES8)."
   def start_link(opts) do
@@ -159,7 +161,8 @@ defmodule Crdt.Replica do
   # Local edits (DES4.5, DES7): validate first, then one call does every character
 
   @impl true
-  def handle_call({:insert, index, text}, _from, state) do
+  # DES5.1: only a binary text; other shapes fall to the unknown call below (REQ23)
+  def handle_call({:insert, index, text}, _from, state) when is_binary(text) do
     if in_range?(index, size(state)) do
       edits = for {ch, k} <- Enum.with_index(String.graphemes(text)), do: {:insert, index + k, ch}
       {:reply, :ok, local_edit(state, edits)}
@@ -185,10 +188,9 @@ defmodule Crdt.Replica do
 
   def handle_call(:status, _from, state), do: {:reply, status_lines(state), state}
 
-  def handle_call({:history, which}, _from, state) do
-    lines = Enum.map(state.history, &describe(state, &1))
-    {:reply, last_lines(lines, which), state}
-  end
+  # DES9: every line; Crdt keeps the last 10 for history/0
+  def handle_call(:history, _from, state),
+    do: {:reply, Enum.map(state.history, &describe(state, &1)), state}
 
   def handle_call(:debug, _from, state) do
     lines =
@@ -198,19 +200,32 @@ defmodule Crdt.Replica do
     {:reply, lines, state}
   end
 
+  # REQ23, DES5.1: an unknown call is dropped and answers {:error, :unknown}
+  def handle_call(request, _from, state) do
+    drop(state, request)
+    {:reply, {:error, :unknown}, state}
+  end
+
   # Network messages (DES4.2, DES4.3, DES4.4)
 
+  # REQ23, DES5.1: checked before Crdt.Causal sees it; only the keys of the format go on
   @impl true
   def handle_cast({:remote, msg}, state) do
-    {state, events} = Causal.receive_message(state, msg, &Treedoc.effect/2)
-    {:noreply, Enum.reduce(events, state, &handle_event/2)}
+    if Treedoc.valid_op?(msg) and Causal.valid_clock?(msg) do
+      {state, events} = Causal.receive_message(state, format_keys(msg), &Treedoc.effect/2)
+      {:noreply, Enum.reduce(events, state, &handle_event/2)}
+    else
+      drop(state, {:remote, msg})
+    end
   end
 
   # REQ12: resend the history on hello and on nodeup, from any node (DES4.4, DES6)
-  def handle_cast({:hello, n}, state) do
+  def handle_cast({:hello, n}, state) when is_atom(n) do
     resend_history(state, "hello from #{n}")
     {:noreply, state}
   end
+
+  def handle_cast(message, state), do: drop(state, message)
 
   @impl true
   def handle_info({:nodeup, n}, state) do
@@ -232,6 +247,21 @@ defmodule Crdt.Replica do
     Process.send_after(self(), :connect, @connect_every)
     {:noreply, state}
   end
+
+  def handle_info(message, state), do: drop(state, message)
+
+  # REQ23, DES9: one short line, also for a large term; nothing changes
+  defp drop(state, message) do
+    say(
+      state.me,
+      "malformed message dropped: " <> inspect(message, limit: 5, printable_limit: 40)
+    )
+
+    {:noreply, state}
+  end
+
+  defp format_keys(%{op: :ins} = msg), do: Map.take(msg, [:ch | @keys])
+  defp format_keys(msg), do: Map.take(msg, @keys)
 
   # DES4.1: per character, on the state left by the previous one
   defp local_edit(state, edits) do
@@ -311,12 +341,6 @@ defmodule Crdt.Replica do
       true -> "other"
     end
   end
-
-  defp last_lines(lines, :last) when length(lines) > 10 do
-    ["... #{length(lines) - 10} earlier ops" | Enum.take(lines, -10)]
-  end
-
-  defp last_lines(lines, _which), do: lines
 
   defp waiting_text(state, msg) do
     missing = for {n, seq} <- Causal.missing(state.vc, msg), do: "#{n} up to #{seq}"

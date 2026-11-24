@@ -190,18 +190,18 @@ returns `"hola"` on the others. The other cases are in
 4. Erlang connection test, without our code (two computers). First
    `ping <OTHER_IP>`; Windows blocks incoming ping by default, so a ping
    towards Windows may fail without being an error. Then, on both, an
-   Erlang node with the same fixed ports as the script:
+   Erlang node with the same fixed ports and partitions flag as the script:
 
    Windows (PowerShell):
 
    ```powershell
-   $env:ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228"; iex.bat --name test@<MY_IP> --cookie cpd2026
+   $env:ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228 prevent_overlapping_partitions false"; iex.bat --name test@<MY_IP> --cookie cpd2026
    ```
 
    macOS and Linux:
 
    ```sh
-   ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228" iex --name test@<MY_IP> --cookie cpd2026
+   ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228 prevent_overlapping_partitions false" iex --name test@<MY_IP> --cookie cpd2026
    ```
 
    On one of them, `Node.connect(:"test@<OTHER_IP>")` returns `true`

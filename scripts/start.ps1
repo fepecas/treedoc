@@ -62,8 +62,9 @@ if ($Ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
 Write-Host "node: $Name@$Ip (interface: $interface)"
 
 # Fixed distribution ports, so the firewall needs fixed rules (DES6)
+# REQ22, DES6: a dropped link must not cut the other links (partitions flag off)
 $oldFlags = $env:ERL_AFLAGS
-$env:ERL_AFLAGS = "-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228"
+$env:ERL_AFLAGS = "-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228 prevent_overlapping_partitions false"
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
     mix compile

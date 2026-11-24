@@ -4,6 +4,9 @@ defmodule Crdt.Causal do
   Pure module: no processes, network or files. A missing clock key counts as 0.
   """
 
+  # DES5.1: the same cap as the other implementation (REQ22)
+  @max_keys 10_000
+
   @doc """
   Candidate `{seq, vc}` for a local operation at `me`, without side effects (REQ4, DES4.1).
   The caller keeps the new clock only if `Treedoc.prepare/3` returns `{:ok, _}`.
@@ -82,6 +85,18 @@ defmodule Crdt.Causal do
         into: %{},
         do: {k, need}
   end
+
+  @doc """
+  True if the `from` and `vc` of a received `msg` follow DES5.1 (REQ23): `from` a node atom, at most
+  10 000 atom keys with integers >= 0, and vc[from] >= 1.
+  """
+  def valid_clock?(%{from: from, vc: vc})
+      when is_atom(from) and from not in [nil, true, false] and is_map(vc) and
+             map_size(vc) <= @max_keys do
+    get(vc, from) >= 1 and Enum.all?(vc, fn {k, n} -> is_atom(k) and is_integer(n) and n >= 0 end)
+  end
+
+  def valid_clock?(_), do: false
 
   defp get(vc, k), do: Map.get(vc, k, 0)
 end

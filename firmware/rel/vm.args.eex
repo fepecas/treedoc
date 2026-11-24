@@ -1,7 +1,10 @@
 ## Customize flags given to the VM: https://www.erlang.org/doc/apps/erts/erl_cmd.html
 
-## DES15: no distribution lines here. CrdtFw gives the name, the cookie and
-## the ports at run time.
+## DES15: no name, cookie or port lines here. CrdtFw gives the name, the
+## cookie and the ports at run time.
+
+## REQ22, DES15: global reads this once at boot, before CrdtFw starts
+-kernel prevent_overlapping_partitions false
 
 ## Use Ctrl-C to interrupt the current shell rather than invoking the emulator's
 ## break handler and possibly exiting the VM.

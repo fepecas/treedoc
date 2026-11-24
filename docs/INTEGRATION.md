@@ -38,7 +38,12 @@ What any Erlang node needs to connect to ours (`DESIGN.md` DES6).
   `--name <name>` with our scripts, or your own `--name`.
 - Ports: EPMD on TCP 4369, and one distribution port per node. Our
   start scripts fix it to the range 4218 to 4228
-  (`ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228"`).
+  (`ERL_AFLAGS="-kernel inet_dist_listen_min 4218 inet_dist_listen_max 4228 prevent_overlapping_partitions false"`).
+- Partitions: start your node with
+  `-kernel prevent_overlapping_partitions false`, as ours do, so a
+  dropped link does not cut the other links (`DESIGN.md` DES6,
+  "Partitions"). Keep `net_ticktime` at the OTP default (60 s): nodes
+  with different values drop each other when idle.
 - Firewall: allow TCP 4369 and TCP 4218 to 4228 (and UDP 45892 for L2).
   On Windows the network profile must be Private. Exact commands for
   Windows and macOS: [NETWORK.md](NETWORK.md), section 2.
@@ -141,8 +146,10 @@ In Erlang: `gen_server:cast({'Elixir.Crdt.Replica', 'crdt1@192.168.1.21'}, {remo
 
 ### Rules for an op you send us
 
-What really happens if a rule is broken was seen in a test with a
-foreign node (section "Minimal example").
+What really happens if one of rules 1 to 4 is broken was seen in a test
+with a foreign node (section "Minimal example"). Rule 5 is checked by
+our replica before anything else, and our tests send it many malformed
+and unknown messages (REQ23, `DESIGN.md` DES12).
 
 1. `vc[from]` counts 1, 2, 3… per node, with no gaps and no reuse
    (`DESIGN.md` DES4.1, DES4.2).
@@ -163,12 +170,19 @@ foreign node (section "Minimal example").
    - A PosID already used replaces our character on every node:
      `"Tabholax"` became `"TabHolax"`.
    - A PosID in the wrong place shows the character in that place.
-5. The keys of the format are all there.
-   - With `{:remote, %{}}`, our replica crashed (`KeyError`), the
-     supervisor restarted it, it loaded its file and sent its history
-     again. No text was lost; the buffer was. More than 3 crashes in 5
-     seconds stop the editor on that node (the default of the
-     supervisor, `DESIGN.md` DES4.5; not tested).
+5. The message has exactly the format above (`DESIGN.md` DES5.1).
+   - `op` is `:ins` with a `ch`, or `:del`; `from` is an atom other
+     than `nil`, `true` and `false`; `vc` maps at most 10 000 atoms to
+     integers >= 0, with `vc[from] >= 1`; `pos` is a non-empty list of
+     `{0 or 1, integer >= 1, atom}`, where the atom is not `nil`,
+     `true` or `false`; `ch` is one valid grapheme. `{:hello, node}`
+     needs an atom.
+   - The step atom is stricter than in some other implementations: our
+     history file could not load `nil`, `true` or `false` back.
+   - Anything else is dropped. Our node prints
+     `malformed message dropped: ...`, nothing changes, and the replica
+     keeps running. Unknown calls answer `{:error, :unknown}`.
+   - Extra keys are removed before the op is stored or forwarded.
 
 ### A full implementation
 
@@ -176,9 +190,13 @@ To keep a copy of the document that converges with ours, a node needs
 Treedoc with our PosIDs and our comparison (`DESIGN.md` DES3.3), causal
 delivery with vector clocks (DES4.2), forwarding of every applied op
 once (DES4.3), and a history sent again on connection and on `hello`
-(DES4.4). We document it; we do not support other implementations. A
-different CRDT (RGA, Logoot) cannot interoperate with ours: its
-positions do not compare with our PosIDs.
+(DES4.4). An implementation that does all of this, with the rules
+above, edits the same document with ours, with no change on either side
+(REQ22). Tested with another team's implementation: MAN16 (on
+computers) and MAN17 (with our Pi with Nerves) passed, MAN18 (Pi to Pi)
+pending (`MANUAL-TESTS.md`). Each team checked so far, and our
+code for each rule: [teams/](../teams/README.md). A different CRDT (RGA, Logoot) cannot
+interoperate with ours: its positions do not compare with our PosIDs.
 
 ## Add another Raspberry Pi
 

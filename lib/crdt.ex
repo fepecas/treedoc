@@ -19,10 +19,10 @@ defmodule Crdt do
   def status, do: print(call(:status))
 
   @doc "Prints the last 10 applied ops, after `... N earlier ops` if there are more (REQ17)."
-  def history, do: print(call({:history, :last}))
+  def history, do: print(last_lines(call(:history)))
 
   @doc "With `:all`, prints every applied op in the order it was applied."
-  def history(:all), do: print(call({:history, :all}))
+  def history(:all), do: print(call(:history))
 
   @doc "Prints every character with its PosID and whether it is deleted."
   def debug, do: print(call(:debug))
@@ -33,6 +33,12 @@ defmodule Crdt do
       do: GenServer.call(Replica, request),
       else: {:error, :no_replica}
   end
+
+  # DES9: the replica answers every line; the cut to the last 10 is done here (REQ17)
+  defp last_lines(lines) when is_list(lines) and length(lines) > 10,
+    do: ["... #{length(lines) - 10} earlier ops" | Enum.take(lines, -10)]
+
+  defp last_lines(lines_or_error), do: lines_or_error
 
   # DES9: print in the caller's console, also from a remote shell
   defp print(lines) when is_list(lines), do: Enum.each(lines, &IO.puts/1)

@@ -106,6 +106,13 @@ this project that each function calls.
   DES3.5.
 - `debug_rows/1` (public): every character in order as
   `{ch, pos, deleted?}`. Calls `sorted_positions/1`. DES3.5, DES9.
+- `valid_op?/1` (public): true if the `op`, `pos` and `ch` of a
+  received message follow the rules; the same rules as the other
+  implementation, except that a step node `nil`, `true` or `false` is
+  dropped. Calls `steps?/1`, `grapheme?/1`. DES5.1, REQ23, REQ22.
+- `steps?/1` (private): every step is `{0 or 1, seq >= 1, node atom}`;
+  by recursion, so an improper list is false. DES5.1.
+- `grapheme?/1` (private): exactly one valid grapheme. DES5.1, DES3.5.
 - `new_pos/4` (private): left child of the right neighbour, or right
   child of the left one. DES3.4.
 - `sorted_positions/1` (private): every PosID, sorted with `compare/2`.
@@ -130,6 +137,9 @@ this project that each function calls.
   `drain/2`. DES4.2.
 - `missing/2` (public): what a waiting message still needs, as
   `%{node => seq}`. DES4.2, DES9.
+- `valid_clock?/1` (public): true if the `from` and `vc` of a received
+  message follow the rules: `from` a node atom, at most 10 000 atom
+  keys with integers >= 0, `vc[from] >= 1`. DES5.1, REQ23.
 - `step/3` (private): one message: `{:duplicate, msg}`,
   `{:applied, msg}` (calls the `apply_fun`, `Crdt.Treedoc.effect/2`) or
   `{:waiting, msg, missing}`. Calls `duplicate?/2`, `deliverable?/2`,
@@ -173,7 +183,11 @@ this project that each function calls.
   1 by default. Calls `call/1`. DES9.
 - `text/0` (public): the visible text. Calls `call/1`. DES9.
 - `status/0`, `history/0`, `history/1`, `debug/0` (public): ask for
-  lines and print them here. Call `call/1`, `print/1`. DES9.
+  lines and print them here. Call `call/1`, `print/1`; `history/0` also
+  `last_lines/1`. DES9.
+- `last_lines/1` (private): the last 10 lines, after
+  `... N earlier ops` if there are more; an error goes through as it
+  is. DES9.
 - `call/1` (private): `GenServer.call/2` to `Crdt.Replica`, or
   `{:error, :no_replica}` if it is not running. DES9.
 - `print/1` (private): prints a list of lines, or returns the error.
@@ -207,8 +221,9 @@ this project that each function calls.
   `:ip` and `:port`. DES8.
 - `info/0` (public): `{mode, heard}`, for `Crdt.status()`. DES9.
 - `packet/1` (public): the text `crdt-treedoc-1 <node name>`. DES6.1.
-- `parse/1` (public): `{:ok, node}` if the packet has the tag, otherwise
-  `:ignore`. DES6.1.
+- `parse/1` (public): `{:ok, node}` if the packet has the tag and a name
+  that can be an atom (at most 255 bytes, valid UTF-8), otherwise
+  `:ignore`. DES6.1, REQ23.
 - `init/1` (public): opens the socket and sends the first `:announce`;
   `:ignore` with a message if no socket can be opened. Calls
   `interface/1`, `open/2`. DES6.1, DES6.
@@ -240,10 +255,12 @@ this project that each function calls.
   - `history`: every applied op, in the order it was applied.
 - Messages it handles:
   - Calls from `Crdt`: `{:insert, index, text}`,
-    `{:delete, index, count}`, `:text`, `:status`, `{:history, which}`,
+    `{:delete, index, count}`, `:text`, `:status`, `:history`,
     `:debug`.
   - Casts from other nodes: `{:remote, msg}` and `{:hello, node}`.
   - Others: `{:nodeup, node}`, `{:nodedown, node}`, `:connect`.
+  - Anything else (an unknown call, cast or message, or a malformed
+    `{:remote, msg}`): dropped with a notice. DES5.1, REQ23.
 - `start_link/1` (public): starts the GenServer with the options `:me`,
   `:nodes`, `:data_dir` and `:name`. DES8.
 - `init/1` (public): the start order; `:ignore` with a message if the
@@ -268,16 +285,27 @@ this project that each function calls.
   DES4.5.
 - `write_log/2` (private): writes lines and does one `:file.sync/1`.
   Calls `Crdt.LogFormat.to_json_line/1`. DES4.5.
-- `handle_call/3` (public): local edits and queries. Calls
-  `local_edit/2`, `size/1`, `status_lines/1`, `describe/2`,
-  `Crdt.Treedoc.value/1`, `Crdt.Treedoc.debug_rows/1`. DES4.5, DES7, DES9.
-- `handle_cast/2` (public): `{:remote, msg}` goes to
-  `Crdt.Causal.receive_message/3` and then `handle_event/2`;
-  `{:hello, node}` calls `resend_history/2`. DES4.2, DES4.4.
+- `handle_call/3` (public): local edits and queries (`:history`
+  answers every line); `{:insert, index, text}` only with a binary
+  text; an unknown call calls `drop/2` and answers `{:error, :unknown}`.
+  Calls `local_edit/2`, `size/1`, `status_lines/1`, `describe/2`,
+  `Crdt.Treedoc.value/1`, `Crdt.Treedoc.debug_rows/1`. DES4.5, DES5.1,
+  DES7, DES9.
+- `handle_cast/2` (public): a `{:remote, msg}` that passes
+  `Crdt.Treedoc.valid_op?/1` and `Crdt.Causal.valid_clock?/1` goes,
+  through `format_keys/1`, to `Crdt.Causal.receive_message/3` and then
+  `handle_event/2`; `{:hello, node}` with an atom calls
+  `resend_history/2`; anything else calls `drop/2`. DES4.2, DES4.4,
+  DES5.1.
 - `handle_info/2` (public): `{:nodeup, node}` calls `resend_history/2`;
   `{:nodedown, node}` prints `disconnected`; `:connect` spawns one
-  `Node.connect/1` per missing node and repeats every 2 seconds. DES4.4,
-  DES6, DES7.1.
+  `Node.connect/1` per missing node and repeats every 2 seconds;
+  anything else calls `drop/2`. DES4.4, DES6, DES7.1, DES5.1.
+- `drop/2` (private): prints `malformed message dropped: ...` with
+  `inspect/2`, `limit: 5` and `printable_limit: 40`; changes nothing.
+  DES9, REQ23.
+- `format_keys/1` (private): keeps only `op`, `from`, `vc`, `pos` and,
+  for an insert, `ch`. DES5.1.
 - `local_edit/2` (private): every character of one call, then one write
   and the broadcast. Calls `local_op/2`, `write_log/2`, `broadcast/1`.
   DES4.5, DES7.
